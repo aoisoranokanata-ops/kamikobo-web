@@ -142,7 +142,8 @@ class NoteView {
   }
   render() {
     const n = this.note;
-    const key = n ? `${n.version}|${this.s}|${this.rot}|${this.ox}|${this.oy}|${this.cssW}|${this.cssH}|${this.hidden ? this.hidden.size : 0}` : '';
+    const pb = this.app.player && this.app.player.open ? this.app.player.baseKey() : '';
+    const key = n ? `${n.version}|${this.s}|${this.rot}|${this.ox}|${this.oy}|${this.cssW}|${this.cssH}|${this.hidden ? this.hidden.size : 0}|${pb}` : '';
     if (this._baseDirty || key !== this._baseKey) {
       this.renderBase(); this._baseKey = key; this._baseDirty = false;
       if (this.app.zoomWin && this.app.zoomWin.open) this.app.zoomWin.request();
@@ -160,12 +161,19 @@ class NoteView {
     const vr = this.visibleDocRect();
     const hide = this.hidden;
     const visible = (list) => (hide && hide.size ? list.filter((s) => !hide.has(s.id)) : list);
+    // 録音の再生中: まだ書いていない線は薄く
+    const P = this.app.player && this.app.player.open && this.app.player.sync ? this.app.player : null;
+    const drawInk = (list, clip, opt) => {
+      if (!P) { drawStrokes(g, list, clip, opt); return; }
+      drawStrokes(g, list.filter((s) => !P.isFuture(s)), clip, opt);
+      drawStrokes(g, list.filter((s) => P.isFuture(s)), clip, { ...opt, alpha: 0.16 });
+    };
     g.imageSmoothingQuality = 'high';
     if (n.board) {
       const p = n.pages[0];
       drawBoardPaper(g, p, vr, this.s);
       drawImages(g, p, hide, { screen: true });
-      drawStrokes(g, visible(p.strokes), [vr.x0, vr.y0, vr.x1, vr.y1], { minW: 0.8 / this.s });
+      drawInk(visible(p.strokes), [vr.x0, vr.y0, vr.x1, vr.y1], { minW: 0.8 / this.s });
       return;
     }
     const midY = (vr.y0 + vr.y1) / 2;
@@ -197,7 +205,7 @@ class NoteView {
           Math.abs(r.y + r.h / 2 - midY) / 1000);
       }
       drawImages(g, p, hide, { screen: true });
-      drawStrokes(g, visible(p.strokes), clip, { minW: 0.8 / this.s });
+      drawInk(visible(p.strokes), clip, { minW: 0.8 / this.s });
       g.restore();
     }
   }
@@ -218,6 +226,7 @@ class NoteView {
       });
     }
     if (this.app.zoomWin) this.app.zoomWin.drawMarker(g, this);
+    if (this.app.player && this.app.player.open) this.app.player.drawOverlay(g, this);
     const tool = this.app.tool;
     if (tool && tool.drawOverlay) tool.drawOverlay(g, this);
     if (tool !== this.app.tools.laser && this.app.tools.laser.trails.length) this.app.tools.laser.drawOverlay(g, this);

@@ -50,6 +50,7 @@
       <button data-tool="hand" title="手のひら（スペース）">✋</button>
     </div>
     <div class="tb-right">
+      <button id="btn-rec" class="ghost" title="録音（書いた線と音声が同期します）">🎙</button>
       <button id="btn-mark" class="ghost" title="このページにしおり（B）">🔖</button>
       <button id="btn-search" class="ghost" title="ノートの中を検索（⌘F）">🔍</button>
       <button id="btn-insert" class="ghost" title="画像・PDF を挿入">🖼</button>
@@ -100,6 +101,28 @@
     </div>
     <div id="pp-list" class="pp-list"></div>
   </aside>
+  <aside id="recpanel" class="pagepanel searchpanel" hidden>
+    <div class="pp-head"><span>録音</span><button id="rp-new" class="small">● 録音する</button><button id="rp-close" class="ghost">✕</button></div>
+    <div id="rp-list" class="sp-list"></div>
+  </aside>
+  <div id="recbar" class="recbar" hidden>
+    <span class="rec-dot"></span><span id="rb-time">0:00</span>
+    <span id="rb-text" class="rb-text"></span>
+    <button id="rb-pause" class="small">一時停止</button>
+    <button id="rb-stop" class="small danger">停止</button>
+  </div>
+  <div id="playbar" class="playbar" hidden>
+    <button id="pb-back" class="ghost" title="10 秒もどる">↺10</button>
+    <button id="pb-play" class="ghost pb-play" title="再生・一時停止">▶</button>
+    <button id="pb-fwd" class="ghost" title="10 秒すすむ">10↻</button>
+    <span id="pb-time" class="pb-time">0:00</span>
+    <input id="pb-seek" type="range" min="0" max="1000" value="0">
+    <span id="pb-dur" class="pb-time">0:00</span>
+    <button id="pb-rate" class="small" title="速さ">1×</button>
+    <button id="pb-sync" class="small on" title="書いた線を音声に合わせて見せる">線の再生</button>
+    <span id="pb-name" class="pb-name muted"></span>
+    <button id="pb-close" class="ghost" title="閉じる">✕</button>
+  </div>
   <aside id="searchpanel" class="pagepanel searchpanel" hidden>
     <div class="pp-head"><input id="sp-input" type="search" placeholder="ノートの中の文字を検索" autocomplete="off"><button id="sp-close" class="ghost">✕</button></div>
     <div id="sp-list" class="sp-list"></div>
@@ -121,6 +144,7 @@
 <script src="js/ruler.js"></script>
 <script src="js/zoomwin.js"></script>
 <script src="js/templates.js"></script>
+<script src="js/recorder.js"></script>
 <script src="js/pdfdoc.js"></script>
 <script src="js/exporter.js"></script>
 <script src="js/library.js"></script>

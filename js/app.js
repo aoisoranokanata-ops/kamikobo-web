@@ -8,6 +8,7 @@ const DEFAULT_SETTINGS = {
   rotateGesture: false,       // 2 本指で画面も回す
   fitPage: false,             // 画面に合わせる: ページ全体（false なら幅）
   shapeHold: true,            // 書いて止めると図形に整える
+  transcribe: true,           // 録音しながら文字起こし（Web Speech）
 };
 
 const DEFAULT_TOOLS = {
@@ -31,6 +32,8 @@ class App {
     this.prevTool = 'pen';
     this.view = new NoteView(this, $('#base'), $('#over'));
     this.zoomWin = new ZoomWindow(this);
+    this.recorder = new Recorder(this);
+    this.player = new Player(this);
     this.library = new Library(this);
     this.saveSoon = debounce(() => this.saveNote(), 700);
     this.saveViewSoon = debounce(() => this.saveView(), 600);
@@ -41,8 +44,8 @@ class App {
     this.bindEditor();
     this.bindKeys();
     this.bindDrop();
-    document.addEventListener('visibilitychange', () => { if (document.hidden) this.saveNote(true); });
-    window.addEventListener('pagehide', () => this.saveNote(true));
+    document.addEventListener('visibilitychange', () => { if (document.hidden) { this.saveNote(true); if (this.recorder.active) this.recorder.persist(false); } });
+    window.addEventListener('pagehide', () => { this.saveNote(true); if (this.recorder.active) this.recorder.persist(false); });
   }
   get tool() { return this.tools[this.toolName]; }
   saveSettings() { saveJSON('settings', this.settings); }
@@ -74,6 +77,8 @@ class App {
     this.searchMarks = null;
     this.panelSel = null;
     this.closeSearch();
+    this.player.close();
+    this.closeRecPanel();
     this.view.resize();
     this.view.fit(false);
     if (!this.note.board && item.lastPage) this.view.goToPage(item.lastPage);
@@ -83,6 +88,9 @@ class App {
   }
   async closeNote() {
     if (!this.note) return;
+    if (this.recorder.active) await this.recorder.stop();
+    this.player.close();
+    this.closeRecPanel();
     this.tools.text.commit(this.view);
     if (this.zoomWin.open) this.zoomWin.toggle(false);
     this.view.ruler.visible = false;
@@ -593,6 +601,17 @@ class App {
       row.addEventListener('click', () => this.showHit(i, q));
       list.append(row);
     });
+    for (const r of n.item.recordings || []) {
+      for (const seg of r.transcript || []) {
+        const sn = snippetOf(seg.text, q);
+        if (!sn) continue;
+        count++;
+        const row = el('button', { class: 'sp-row' }, el('span', { class: 'sp-page' }, '🎙'),
+          el('span', { class: 'sp-snip' }, `${r.name} ${fmtClock(seg.t)}  `, sn.before, el('b', {}, sn.hit), sn.after));
+        row.addEventListener('click', () => this.player.play(r, Math.max(0, seg.t - 1000)));
+        list.append(row);
+      }
+    }
     if (!count) list.append(el('div', { class: 'sp-hint muted' }, '見つかりませんでした'));
     else list.prepend(el('div', { class: 'sp-hint muted' }, `${count} ページで見つかりました`));
     this._hits = hits;
@@ -942,6 +961,7 @@ class App {
     const hit = n.pageAt(P.x, P.y, 0);
     if (hit.inside) {
       const q = n.docToPage(hit.page, P.x, P.y);
+      if (this.player.open && this.player.sync && this.player.seekToStroke(hit.page, q, 10 / this.view.s)) return;
       const link = (hit.page.images || []).slice().reverse().find((o) => o.kind === 'link' && imageHit(o, q.x, q.y));
       if (link) { this.followLink(link); return; }
       if (this.zoomWin.open && !n.board && this.zoomWin.moveTo(hit.page, q)) return;
@@ -977,6 +997,107 @@ class App {
     n.swapBoth(page, page.strokes.slice(), page.strokes.slice(), ib, ib.concat([o]), 'リンク');
     L.clear(this.view);
     toast('リンクを付けました（指でタップすると移動します）');
+  }
+
+  // ================= 録音
+  bindRec() {
+    const R = this.recorder, P = this.player;
+    $('#btn-rec').addEventListener('click', (e) => {
+      if (R.active) { popMenu(e.currentTarget, [
+        { label: R.state === 'paused' ? '▶ 録音を続ける' : '⏸ 一時停止', fn: () => (R.state === 'paused' ? R.resume() : R.pause()) },
+        { label: '■ 録音を止めて保存', fn: () => R.stop() }]); return; }
+      const recs = (this.note && this.note.item.recordings) || [];
+      popMenu(e.currentTarget, [
+        { label: '● 録音を始める', fn: () => R.start() },
+        { label: (this.settings.transcribe ? '✓ ' : '　 ') + '録音しながら文字起こし', fn: () => { this.settings.transcribe = !this.settings.transcribe; this.saveSettings(); } },
+        null,
+        { label: `録音の一覧（${recs.length}）`, fn: () => this.openRecPanel() },
+      ]);
+    });
+    $('#rb-pause').addEventListener('click', () => (R.state === 'paused' ? R.resume() : R.pause()));
+    $('#rb-stop').addEventListener('click', () => R.stop());
+    $('#rp-new').addEventListener('click', () => R.start());
+    $('#rp-close').addEventListener('click', () => this.closeRecPanel());
+    $('#pb-play').addEventListener('click', () => P.toggle());
+    $('#pb-back').addEventListener('click', () => P.skip(-10));
+    $('#pb-fwd').addEventListener('click', () => P.skip(10));
+    $('#pb-close').addEventListener('click', () => P.close());
+    $('#pb-rate').addEventListener('click', () => { const rs = [1, 1.25, 1.5, 2, 0.75]; P.setRate(rs[(rs.indexOf(P.rate || 1) + 1) % rs.length]); });
+    $('#pb-sync').addEventListener('click', () => { P.sync = !P.sync; this.updatePlayBar(); this.view.invalidate(); });
+    const seek = $('#pb-seek');
+    seek.addEventListener('input', () => { const d = this.recDur(); if (d) P.seek((seek.value / 1000) * d); });
+  }
+  recDur() { const P = this.player; if (!P.rec) return 0; const a = P.audio; return a && isFinite(a.duration) && a.duration > 0 ? a.duration * 1000 : P.rec.dur || 0; }
+  showRecBar() { $('#recbar').hidden = false; $('#btn-rec').classList.add('rec-on'); this.updateRecBar(); }
+  hideRecBar() { $('#recbar').hidden = true; $('#btn-rec').classList.remove('rec-on'); }
+  updateRecBar() {
+    const R = this.recorder;
+    if (!R.active) return;
+    $('#rb-time').textContent = fmtClock(R.pos());
+    $('#rb-pause').textContent = R.state === 'paused' ? '続ける' : '一時停止';
+    $('#recbar').classList.toggle('paused', R.state === 'paused');
+    const tr = R.rec.transcript, last = tr.length ? tr[tr.length - 1].text : '';
+    $('#rb-text').textContent = R.interim || last || (this.settings.transcribe && SpeechRec ? '（話すと文字になります）' : '');
+  }
+  showPlayBar() { $('#playbar').hidden = false; this.updatePlayBar(); }
+  hidePlayBar() { $('#playbar').hidden = true; }
+  updatePlayBar() {
+    const P = this.player;
+    if (!P.rec) return;
+    const pos = P.posMs(), d = this.recDur();
+    $('#pb-play').textContent = P.audio && !P.audio.paused ? '⏸' : '▶';
+    $('#pb-time').textContent = fmtClock(pos);
+    $('#pb-dur').textContent = fmtClock(d);
+    if (document.activeElement !== $('#pb-seek')) $('#pb-seek').value = d ? Math.round((pos / d) * 1000) : 0;
+    $('#pb-rate').textContent = (P.rate || 1) + '×';
+    $('#pb-sync').classList.toggle('on', P.sync);
+    $('#pb-name').textContent = P.rec.name;
+  }
+  openRecPanel() { this.closePanel(); this.closeSearch(); $('#recpanel').hidden = false; this.refreshRecPanel(); }
+  closeRecPanel() { const p = $('#recpanel'); if (p) p.hidden = true; }
+  refreshRecPanel() {
+    const panel = $('#recpanel');
+    if (!panel || panel.hidden || !this.note) return;
+    const list = $('#rp-list'), item = this.note.item, recs = (item.recordings || []).slice().sort((a, b) => b.created - a.created);
+    list.innerHTML = '';
+    if (!recs.length) list.append(el('div', { class: 'sp-hint muted' }, '録音はまだありません。「● 録音する」で始めると、書いた線と音声がつながり、あとで線を光らせながら聞き直せます。'));
+    for (const r of recs) {
+      const tr = el('div', { class: 'rp-tr' });
+      for (const seg of r.transcript || []) {
+        const b = el('button', { class: 'sp-row' }, el('span', { class: 'sp-page' }, fmtClock(seg.t)), el('span', { class: 'sp-snip' }, seg.text));
+        b.addEventListener('click', () => this.player.play(r, Math.max(0, seg.t - 1000)));
+        tr.append(b);
+      }
+      list.append(el('div', { class: 'rp-item' },
+        el('div', { class: 'rp-head' },
+          el('button', { class: 'pb-play small', title: '再生', onclick: () => this.player.play(r, 0) }, '▶'),
+          el('div', { class: 'rp-meta' }, el('b', {}, r.name), el('span', { class: 'muted small' }, `${fmtDate(r.created)}・${fmtClock(r.dur)}${(r.transcript || []).length ? '・文字起こしあり' : ''}`)),
+          el('button', { class: 'ghost small', title: 'その他', onclick: (e) => this.recMenu(r, e.currentTarget) }, '⋯')),
+        tr));
+    }
+  }
+  recMenu(r, anchor) {
+    const item = this.note.item;
+    const save = async () => { item.updated = Date.now(); await Store.saveNote(item, [], [], recTextRecs(item)); this.refreshRecPanel(); };
+    popMenu(anchor, [
+      { label: '名前を変える', fn: async () => { const nm = await askText('録音の名前', r.name); if (nm) { r.name = nm; await save(); } } },
+      { label: '音声を書き出す・共有', fn: async () => {
+        const v = await Src.get(r.src).catch(() => null);
+        if (!v) { toast('録音のデータが見つかりません', { error: true }); return; }
+        const ext = /webm/.test(v.type) ? 'webm' : /ogg/.test(v.type) ? 'ogg' : 'm4a';
+        await offerFile(new Blob([v.data], { type: v.type }), `${safeName(r.name)}.${ext}`);
+      } },
+      { label: '文字起こしを書き出す（テキスト）', disabled: !(r.transcript || []).length, fn: () => offerFile(new Blob([(r.transcript || []).map((x) => `[${fmtClock(x.t)}] ${x.text}`).join('\n')], { type: 'text/plain' }), `${safeName(r.name)}.txt`) },
+      null,
+      { label: '削除', danger: true, fn: async () => {
+        if (!await confirmBox('録音を削除', `「${r.name}」を削除します（書いた線は残ります）。`, '削除', true)) return;
+        if (this.player.rec && this.player.rec.id === r.id) this.player.close();
+        item.recordings = (item.recordings || []).filter((x) => x.id !== r.id);
+        await Store.saveNote(item, [], [], [{ pageId: 'rec|' + r.id, noteId: item.id, text: '', obj: '' }].concat(recTextRecs(item)));
+        Store.gcBlobs().catch(() => {});
+        this.refreshRecPanel();
+      } },
+    ]);
   }
 
   // ================= しおり
@@ -1073,6 +1194,7 @@ class App {
     $('#sel-dup').addEventListener('click', () => L().duplicate(V()));
     $('#sel-link').addEventListener('click', () => this.linkDialog());
     $('#btn-mark').addEventListener('click', () => this.toggleMark());
+    this.bindRec();
     $('#pp-marks').addEventListener('click', () => { this.panelMarks = !this.panelMarks; this.refreshPanel(); });
     $('#sel-color').addEventListener('click', () => {
       const cur = L().sel && L().sel.strokes[0] ? L().sel.strokes[0].color : '#000000';

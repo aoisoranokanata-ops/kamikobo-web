@@ -289,6 +289,7 @@ async function buildBackup(ids, kind = 'library') {
   const pages = [], texts = [], srcs = new Set();
   for (const it of items) {
     if (it.type !== 'note') continue;
+    for (const r of it.recordings || []) srcs.add(r.src);
     const recs = (await Store.getPages(it.pageIds)).filter(Boolean);
     for (const r of recs) {
       if (r.bg) srcs.add(r.bg.src);
@@ -343,7 +344,7 @@ async function restoreBackup(file, parentFolder) {
       pages.push(q);
     }
     copy.pageIds = pages.map((p) => p.id);
-    await Store.saveNote(copy, pages.map(pageRecord), [], textRecs(pages, copy.id));
+    await Store.saveNote(copy, pages.map(pageRecord), [], textRecs(pages, copy.id).concat(recTextRecs(copy)));
     notes++;
   }
   return { notes, kind: H.kind, folder: H.kind === 'library' ? parent : null };

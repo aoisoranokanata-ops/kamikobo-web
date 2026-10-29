@@ -94,6 +94,7 @@ const Store = {
       rq.onerror = () => res();
     }));
     for (const t of MyTemplates.list()) used.add(t.src);          // 自作テンプレートの中身も残す
+    for (const it of await this.allItems()) for (const r of it.recordings || []) used.add(r.src);     // 録音も
     const keys = await this.tx(['blobs'], 'readonly', (s) => this.req(s.getAllKeys()));
     const gone = keys.filter((k) => String(k).startsWith('src|') && !used.has(k));
     if (gone.length) await this.tx(['blobs'], 'readwrite', (s) => { for (const k of gone) s.delete(k); });
@@ -106,7 +107,10 @@ const Store = {
     const walk = (id) => { kill.add(id); for (const c of all) if (c.parent === id) walk(c.id); };
     for (const id of ids) walk(id);
     const pageIds = [];
-    for (const it of all) if (kill.has(it.id) && it.type === 'note') pageIds.push(...(it.pageIds || []));
+    for (const it of all) if (kill.has(it.id) && it.type === 'note') {
+      pageIds.push(...(it.pageIds || []));
+      for (const r of it.recordings || []) pageIds.push('rec|' + r.id);      // 録音の文字（texts）も消す
+    }
     await this.tx(['items', 'pages', 'blobs', 'texts'], 'readwrite', (si, sp, sb, st) => {
       for (const id of kill) { si.delete(id); sb.delete(IDBKeyRange.bound(id + '|', id + '|￿')); }
       for (const id of pageIds) { sp.delete(id); st.delete(id); }

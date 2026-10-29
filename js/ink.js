@@ -117,7 +117,7 @@ function drawStroke(g, s, opt = {}) {
   const path = strokePath(s);
   g.save();
   if (s.tool === 'hl') {
-    g.globalAlpha = s.op == null ? 0.35 : s.op;
+    g.globalAlpha = (s.op == null ? 0.35 : s.op) * (opt.alpha || 1);
     g.globalCompositeOperation = opt.noMultiply ? 'source-over' : 'multiply';
     g.strokeStyle = s.color;
     g.lineWidth = Math.max(s.w, opt.minW || 0);
@@ -125,7 +125,7 @@ function drawStroke(g, s, opt = {}) {
     g.lineJoin = 'round';
     g.stroke(path);
   } else {
-    g.globalAlpha = s.op == null ? 1 : s.op;
+    g.globalAlpha = (s.op == null ? 1 : s.op) * (opt.alpha || 1);
     if (s._fill) {
       g.fillStyle = s.color; g.fill(path, 'nonzero');
       // 縮めて表示したとき細い線が消えないよう、輪郭もなぞる

@@ -45,13 +45,13 @@ class Library {
       if (!r.text || !normText(r.text).includes(nq)) continue;
       const it = this.byId(r.noteId);
       if (!it || it.trashed || this.path(it.parent).some((f) => f.trashed)) continue;
-      const idx = (it.pageIds || []).indexOf(r.pageId);
-      if (idx < 0) continue;
+      const idx = String(r.pageId).startsWith('rec|') ? -1 : (it.pageIds || []).indexOf(r.pageId);
+      if (idx < 0 && !String(r.pageId).startsWith('rec|')) continue;
       const h = byNote.get(it.id) || { it, pages: [] };
       h.pages.push({ idx, text: r.text });
       byNote.set(it.id, h);
     }
-    this.textHits = [...byNote.values()].map((h) => { h.pages.sort((a, b) => a.idx - b.idx); return h; }).sort((a, b) => b.it.updated - a.it.updated);
+    this.textHits = [...byNote.values()].map((h) => { h.pages.sort((a, b) => (a.idx < 0) - (b.idx < 0) || a.idx - b.idx); return h; }).sort((a, b) => b.it.updated - a.it.updated);
     this.render();
   }
   byId(id) { return this.items.find((it) => it.id === id); }
@@ -104,13 +104,13 @@ class Library {
           h.it.thumb ? el('img', { src: h.it.thumb, alt: '' }) : el('span', { class: 'th-blank' }),
           el('span', { class: 'th-body' },
             el('span', { class: 'th-name' }, el('span', { class: 'muted' }, where), h.it.name),
-            el('span', { class: 'th-snip' }, `${first.idx + 1} ページ: `, sn.before, el('b', {}, sn.hit), sn.after),
+            el('span', { class: 'th-snip' }, first.idx < 0 ? '🎙 録音: ' : `${first.idx + 1} ページ: `, sn.before, el('b', {}, sn.hit), sn.after),
             el('span', { class: 'muted small' }, h.pages.length > 1 ? `ほか ${h.pages.length - 1} ページ` : '')));
         row.addEventListener('click', async () => {
           const q = this.query;
           await this.app.openNote(h.it.id);
           this.app.openSearch(q);
-          this.app.showHit(first.idx, q);
+          if (first.idx >= 0) this.app.showHit(first.idx, q);
         });
         g.append(row);
       }
@@ -236,7 +236,7 @@ class Library {
     const copy = { ...it, id: uid('n'), name: it.name + ' のコピー', created: now, updated: now };
     const newPages = src.pages.map((p) => copyPage(p, copy.id));
     copy.pageIds = newPages.map((p) => p.id);
-    await Store.saveNote(copy, newPages.map(pageRecord), [], textRecs(newPages, copy.id));
+    await Store.saveNote(copy, newPages.map(pageRecord), [], textRecs(newPages, copy.id).concat(recTextRecs(copy)));
     await this.refresh();
     toast('複製しました');
   }

@@ -214,3 +214,27 @@ label.row.inline { display: inline-flex; margin: 0 10px 0 0; }
 .cv-preview .cover.cv { display: flex; align-items: flex-start; justify-content: center; padding: 18% 10px 0; }
 .cv-preview .cover.none { background: #fff; color: #888; display: flex; align-items: center; justify-content: center; }
 .cv-row { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 10px; }
+
+/* ---- フェーズ5: 録音・再生 */
+#btn-rec.rec-on { color: #ff5a5a; animation: recblink 1.2s infinite; }
+@keyframes recblink { 50% { opacity: .45; } }
+.recbar { position: fixed; top: calc(var(--safe-t) + 110px); left: 50%; transform: translateX(-50%); z-index: 50; display: flex; align-items: center; gap: 10px;
+  background: rgba(30,32,36,.94); border: 1px solid #6b2b2b; border-radius: 22px; padding: 6px 8px 6px 14px; max-width: min(720px, 94vw); box-shadow: 0 6px 20px rgba(0,0,0,.4); }
+.rec-dot { width: 12px; height: 12px; border-radius: 50%; background: #ff4747; animation: recblink 1.2s infinite; flex: none; }
+.recbar.paused .rec-dot { animation: none; background: #999; }
+#rb-time { font-variant-numeric: tabular-nums; font-weight: 600; }
+.rb-text { flex: 1; min-width: 0; color: var(--muted); font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 380px; }
+.playbar { position: fixed; left: 50%; bottom: calc(var(--safe-b) + 14px); transform: translateX(-50%); z-index: 50; display: flex; align-items: center; gap: 6px;
+  background: rgba(30,32,36,.95); border: 1px solid var(--line); border-radius: 26px; padding: 4px 10px; width: min(860px, 96vw); box-shadow: 0 6px 20px rgba(0,0,0,.45); }
+.playbar button.ghost { width: 42px; padding: 0; }
+.pb-play { font-size: 18px; }
+.pb-time { font-variant-numeric: tabular-nums; font-size: 13px; color: var(--muted); }
+#pb-seek { flex: 1; min-width: 80px; accent-color: var(--accent); }
+.pb-name { font-size: 12px; max-width: 120px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+#pb-sync.on { background: var(--accent); border-color: var(--accent); }
+.rp-item { border-bottom: 1px solid var(--line); padding: 8px 2px; }
+.rp-head { display: flex; align-items: center; gap: 8px; }
+.rp-meta { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+.rp-meta b { font-size: 14px; }
+.rp-tr { max-height: 260px; overflow-y: auto; margin-top: 4px; }
+#editor.with-zoom .playbar { bottom: calc(34vh + 10px); }
