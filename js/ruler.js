@@ -1,5 +1,6 @@
 'use strict';
-/* 定規: 画面に浮かぶ定規。1本指（またはペン・マウスで真ん中）でドラッグ＝移動、2本指＝回転（15° ごとに吸い付く）。
+/* 定規: 画面に浮かぶ定規。1本指（またはペン・マウスで真ん中）でドラッグ＝移動、2本指 または 丸いつまみ（↻）をドラッグ＝回転（15° ごとに吸い付く）。
+   クイックバーの「横・縦・45°」でも向きを変えられる。
    ペンを定規の縁の近くで書き始めると、線が縁にそって真っすぐになる。座標は画面（CSS px）。 */
 
 class Ruler {
@@ -11,6 +12,18 @@ class Ruler {
   }
   get u() { return { x: Math.cos(this.ang), y: Math.sin(this.ang) }; }
   local(x, y) { const u = this.u, dx = x - this.cx, dy = y - this.cy; return { t: dx * u.x + dy * u.y, d: -dx * u.y + dy * u.x }; }
+  /* 回すつまみ（定規の上、真ん中から少し右） */
+  knob() { const u = this.u; return { x: this.cx + u.x * 110, y: this.cy + u.y * 110 }; }
+  knobHit(x, y) { if (!this.visible) return false; const k = this.knob(); return Math.hypot(x - k.x, y - k.y) <= 20; }
+  setAngle(deg) { this.ang = (deg * Math.PI) / 180; this.view.requestOver(); }
+  /* つまみをドラッグした位置へ向ける（15° に吸い付く） */
+  turnTo(x, y) {
+    let a = Math.atan2(y - this.cy, x - this.cx);
+    const snap = Math.round(a / (Math.PI / 12)) * (Math.PI / 12);
+    if (Math.abs(a - snap) < (3 * Math.PI) / 180) a = snap;
+    this.ang = a;
+    this.view.requestOver();
+  }
   /* 本体の上か */
   hit(x, y) { return this.visible && Math.abs(this.local(x, y).d) <= this.W / 2; }
   /* 本体の真ん中あたり（縁から離れた所）＝つかんで動かす所 */
@@ -58,6 +71,10 @@ class Ruler {
     g.font = '600 13px -apple-system, "Hiragino Sans", sans-serif';
     g.fillStyle = 'rgba(30,35,50,.85)';
     g.fillText(`${deg > 180 ? deg - 360 : deg}°`, 0, 6);
+    // 回すつまみ
+    g.beginPath(); g.arc(110, 0, 14, 0, Math.PI * 2);
+    g.fillStyle = 'rgba(61,123,224,.9)'; g.fill();
+    g.fillStyle = '#fff'; g.font = '700 15px -apple-system, sans-serif'; g.fillText('↻', 110, 5);
     g.restore();
   }
 }

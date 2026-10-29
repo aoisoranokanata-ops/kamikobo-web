@@ -41,7 +41,7 @@ class Library {
     const nq = normText(q).trim();
     const byNote = new Map();
     for (const r0 of this.texts) {
-      const r = { ...r0, text: [r0.text || '', r0.obj || '', r0.hw || ''].filter(Boolean).join('\n') };
+      const r = { ...r0, text: [r0.text || '', r0.obj || ''].filter(Boolean).join('\n') };
       if (!r.text || !normText(r.text).includes(nq)) continue;
       const it = this.byId(r.noteId);
       if (!it || it.trashed || this.path(it.parent).some((f) => f.trashed)) continue;

@@ -224,8 +224,8 @@ function blankPage(item, id, like = null) {
 function textRecs(pages, noteId, all = false) {
   const out = [];
   for (const p of pages) {
-    const r = { pageId: p.id, noteId, text: p.text || '', obj: objectsText(p), hw: p.hw ? p.hw.text : '' };
-    if (all || r.text || r.obj || r.hw) out.push(r);
+    const r = { pageId: p.id, noteId, text: p.text || '', obj: objectsText(p) };
+    if (all || r.text || r.obj) out.push(r);
   }
   return out;
 }

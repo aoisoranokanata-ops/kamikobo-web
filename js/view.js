@@ -277,6 +277,11 @@ class NoteView {
           return;
         }
       }
+      if (!this.mode && R.knobHit(lp.x, lp.y) && (e.pointerType !== 'touch' || this.touchCount() === 1)) {
+        this.mode = 'rulerKnob';
+        this.gesture = { id: e.pointerId };
+        return;
+      }
       if (!this.mode && (e.pointerType === 'touch' ? this.touchCount() === 1 && R.hit(lp.x, lp.y) : R.grip(lp.x, lp.y))) {
         this.mode = 'ruler';
         this.gesture = { id: e.pointerId, sx: lp.x, sy: lp.y, cx: R.cx, cy: R.cy };
@@ -343,6 +348,7 @@ class NoteView {
     const lp = this.local(e);
     const ptr = this.pointers.get(e.pointerId);
     if (ptr) { ptr.x = lp.x; ptr.y = lp.y; }
+    if (this.mode === 'rulerKnob') { if (e.pointerId === this.gesture.id) this.ruler.turnTo(lp.x, lp.y); return; }
     if (this.mode === 'ruler' || this.mode === 'rulerRot') {
       const G = this.gesture, R = this.ruler;
       if (this.mode === 'ruler') { if (e.pointerId === G.id) { R.cx = G.cx + lp.x - G.sx; R.cy = G.cy + lp.y - G.sy; this.requestOver(); } return; }
@@ -415,7 +421,7 @@ class NoteView {
     const had = this.pointers.has(e.pointerId);
     this.pointers.delete(e.pointerId);
     if (!had) return;
-    if (this.mode === 'ruler' || this.mode === 'rulerRot') { if (!this.pointers.size) { this.mode = null; this.gesture = null; } return; }
+    if (this.mode === 'ruler' || this.mode === 'rulerRot' || this.mode === 'rulerKnob') { if (!this.pointers.size) { this.mode = null; this.gesture = null; } return; }
     if (this.mode === 'pinch') { if (this.touchCount() === 0) this.endGesture(); return; }
     if (this.mode === 'pan') {
       const G = this.gesture;

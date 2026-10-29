@@ -1,7 +1,7 @@
 'use strict';
 /* 共通の小道具: 版・DOM・トースト・ダイアログ・数値。 */
 
-const APP_VERSION = '1.0.0';
+const APP_VERSION = '1.1.0';
 const LS = 'kamikobo-web.';
 
 const $ = (sel, root = document) => root.querySelector(sel);

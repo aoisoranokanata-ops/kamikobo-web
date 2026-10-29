@@ -119,6 +119,7 @@ function strokeOps(s, gsName) {
       for (let i = 1; i < n - 1; i++) ctx.quadraticCurveTo(p[i * 4], p[i * 4 + 1], (p[i * 4] + p[(i + 1) * 4]) / 2, (p[i * 4 + 1] + p[(i + 1) * 4 + 1]) / 2);
       ctx.lineTo(p[(n - 1) * 4], p[(n - 1) * 4 + 1]);
     }
+    if (s.fill && s.tool !== 'hl') ops.push(rgbOp(s.fill, false), ...ctx.path, 'h', 'f');
     ops.push(rgbOp(s.color, true), `${fmtN(s.w)} w`, s.tool === 'hl' ? '0 J' : '1 J', '1 j', ...ctx.path, 'S');
   } else {
     ops.push(rgbOp(s.color, false));

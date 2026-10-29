@@ -131,6 +131,7 @@ function drawStroke(g, s, opt = {}) {
       // 縮めて表示したとき細い線が消えないよう、輪郭もなぞる
       if (opt.minW && s.w * 0.6 < opt.minW) { g.strokeStyle = s.color; g.lineWidth = opt.minW * 0.6; g.stroke(path); }
     } else {
+      if (s.fill) { g.fillStyle = s.fill; g.fill(path); }      // 図形ツールの塗り（線の下に）
       g.strokeStyle = s.color;
       g.lineWidth = Math.max(s.w, opt.minW || 0);
       g.lineCap = 'round';
@@ -180,7 +181,7 @@ function strokeEraseAt(s, x, y, r) {
   }
   if (cur.length >= 8) pieces.push(cur);
   if (pieces.length === 1 && pieces[0].length === p.length) return null;
-  return pieces.map((arr) => ({ ...strokeRecord(s), id: uid('s'), t0: s.t0, pts: new Float32Array(arr) }));
+  return pieces.map((arr) => ({ ...strokeRecord(s), id: uid('s'), t0: s.t0, fill: undefined, pts: new Float32Array(arr) }));    // 部分消しした図形は塗りをやめる
 }
 
 /* 変形（m = {a,b,c,d,e,f}）。太さは面積の比の平方根で */

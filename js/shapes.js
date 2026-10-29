@@ -122,3 +122,108 @@ function recognizeShape(flat) {
   if (corners.length >= 5 && corners.length <= 8) return { name: corners.length + '角形', pts: segPoints(corners, true) };
   return null;
 }
+
+// ================= 図形ツール: ドラッグで、きれいな図形を描く（線として入るので、なげなわ・消しゴム・PDF 書き出しはペンの線と同じ）
+const SHAPE_KINDS = [
+  { id: 'line', label: '直線', icon: '／' },
+  { id: 'arrow', label: '矢印', icon: '→' },
+  { id: 'rect', label: '四角', icon: '□' },
+  { id: 'round', label: '角丸', icon: '▢' },
+  { id: 'ellipse', label: '円', icon: '○' },
+  { id: 'triangle', label: '三角', icon: '△' },
+  { id: 'rtriangle', label: '直角三角', icon: '◺' },
+  { id: 'diamond', label: 'ひし形', icon: '◇' },
+  { id: 'pentagon', label: '五角形', icon: '⬠' },
+  { id: 'star', label: '星', icon: '☆' },
+];
+const SHAPE_FILLS = ['#fff3a3', '#ffd2e1', '#cfe8ff', '#d5f5c8', '#e6e6e6'];
+
+/* 始点 a・終点 b（ページの座標）→ 図形の点の並び。lock = 正方形・正円・15° ごとの線 */
+function shapePoints(kind, a, b, lock, w = 1) {
+  let [x0, y0] = a, [x1, y1] = b;
+  if (kind === 'line' || kind === 'arrow') {
+    if (lock) {
+      const ang = Math.round(Math.atan2(y1 - y0, x1 - x0) / (Math.PI / 12)) * (Math.PI / 12), L = Math.hypot(x1 - x0, y1 - y0);
+      x1 = x0 + Math.cos(ang) * L; y1 = y0 + Math.sin(ang) * L;
+    }
+    const pts = segPoints([[x0, y0], [x1, y1]], false);
+    if (kind === 'arrow') {
+      const ang = Math.atan2(y1 - y0, x1 - x0), L = Math.hypot(x1 - x0, y1 - y0), hd = Math.min(L * 0.4, Math.max(10, w * 5));
+      const w1 = [x1 - Math.cos(ang - 0.45) * hd, y1 - Math.sin(ang - 0.45) * hd], w2 = [x1 - Math.cos(ang + 0.45) * hd, y1 - Math.sin(ang + 0.45) * hd];
+      return pts.concat(segPoints([[x1, y1], w1], false), segPoints([w1, [x1, y1], w2], false));
+    }
+    return pts;
+  }
+  if (lock) {            // 縦横そろえる（ドラッグした向きは保つ）
+    const s = Math.max(Math.abs(x1 - x0), Math.abs(y1 - y0));
+    x1 = x0 + Math.sign(x1 - x0 || 1) * s; y1 = y0 + Math.sign(y1 - y0 || 1) * s;
+  }
+  const L = Math.min(x0, x1), R = Math.max(x0, x1), T = Math.min(y0, y1), B = Math.max(y0, y1), cx = (L + R) / 2, cy = (T + B) / 2;
+  const rx = (R - L) / 2, ry = (B - T) / 2;
+  const regular = (n, inner = 0) => {
+    const out = [];
+    const m = inner ? n * 2 : n;
+    for (let i = 0; i < m; i++) {
+      const t = -Math.PI / 2 + (i / m) * Math.PI * 2, k = inner && i % 2 ? inner : 1;
+      out.push([cx + Math.cos(t) * rx * k, cy + Math.sin(t) * ry * k]);
+    }
+    return segPoints(out, true);
+  };
+  switch (kind) {
+    case 'rect': return segPoints([[L, T], [R, T], [R, B], [L, B]], true);
+    case 'round': {
+      const r = Math.min(rx, ry) * 0.35, out = [];
+      const arc = (ax, ay, a0) => { for (let i = 0; i <= 6; i++) { const t = a0 + (i / 6) * (Math.PI / 2); out.push([ax + Math.cos(t) * r, ay + Math.sin(t) * r]); } };
+      arc(R - r, T + r, -Math.PI / 2); arc(R - r, B - r, 0); arc(L + r, B - r, Math.PI / 2); arc(L + r, T + r, Math.PI);
+      out.push(out[0].slice());
+      return out;
+    }
+    case 'ellipse': {
+      const out = [], N = Math.max(36, Math.ceil((Math.PI * (rx + ry)) / 4));
+      for (let i = 0; i <= N; i++) { const t = (i / N) * Math.PI * 2; out.push([cx + Math.cos(t) * rx, cy + Math.sin(t) * ry]); }
+      return out;
+    }
+    case 'triangle': return segPoints([[cx, T], [R, B], [L, B]], true);
+    case 'rtriangle': return segPoints([[L, T], [L, B], [R, B]], true);
+    case 'diamond': return segPoints([[cx, T], [R, cy], [cx, B], [L, cy]], true);
+    case 'pentagon': return regular(5);
+    case 'star': return regular(5, 0.42);
+    default: return segPoints([[L, T], [R, T], [R, B], [L, B]], true);
+  }
+}
+function shapeStroke(kind, a, b, o) {
+  const pts = shapePoints(kind, a, b, o.lock, o.w);
+  const s = newStroke('pen', 'ball', o.color, o.w, 1);
+  const arr = new Float32Array(pts.length * 4);
+  pts.forEach(([x, y], i) => { arr[i * 4] = x; arr[i * 4 + 1] = y; arr[i * 4 + 2] = 0.5; arr[i * 4 + 3] = i * 3; });
+  s.pts = arr;
+  if (o.fill && kind !== 'line' && kind !== 'arrow') s.fill = o.fill;
+  return s;
+}
+
+class ShapeTool {
+  constructor(app) { this.app = app; this.showsHover = false; this.cur = null; }
+  get opt() { return this.app.toolState.shape; }
+  down(p, v) {
+    const hit = v.note.pageAt(p.X, p.Y, 0);
+    if (!hit.inside) { this.cur = null; return; }
+    const q = v.note.docToPage(hit.page, p.X, p.Y);
+    this.cur = { page: hit.page, a: [q.x, q.y], b: [q.x, q.y] };
+  }
+  move(p, v) { if (!this.cur) return; const q = v.note.docToPage(this.cur.page, p.X, p.Y); this.cur.b = [q.x, q.y]; v.requestOver(); }
+  up(p, v) {
+    const c = this.cur;
+    this.cur = null;
+    if (!c) return;
+    if (Math.hypot(c.b[0] - c.a[0], c.b[1] - c.a[1]) * v.s < 6) { v.requestOver(); return; }   // ほとんど動かしていない
+    const o = this.opt;
+    v.note.strokesCmd(c.page, [], [shapeStroke(o.kind, c.a, c.b, o)], '図形');
+    v.invalidate();
+  }
+  cancel(v) { this.cur = null; v.requestOver(); }
+  drawOverlay(g, v) {
+    const c = this.cur;
+    if (!c || Math.hypot(c.b[0] - c.a[0], c.b[1] - c.a[1]) * v.s < 2) return;
+    v.withPage(g, c.page, (gg) => drawStroke(gg, shapeStroke(this.opt.kind, c.a, c.b, this.opt)));
+  }
+}

@@ -199,18 +199,28 @@ class LassoTool {
     return { scale: c[2], rotate: { x: mx + ((mx - cx) / L) * 28, y: my + ((my - cy) / L) * 28 }, corners: c };
   }
   hideIds() { return new Set(this.sel.strokes.map((s) => s.id).concat(this.sel.images.map((im) => im.id))); }
+  /* 何を選ぶか（クイックバーで切り替え）: 手書き・蛍光ペン・画像・文字/付箋・スタンプ */
+  get pick() { return this.app.toolState.lasso.pick || {}; }
+  canStroke(s) { const P = this.pick; return s.tool === 'hl' ? P.hl !== false : P.ink !== false; }
+  canObj(o) {
+    if (o.hidden) return false;
+    const P = this.pick, k = o.kind || 'image';
+    return k === 'text' ? P.text !== false : k === 'stamp' ? P.stamp !== false : P.image !== false;     // リンクは画像と同じ扱い
+  }
   down(p, v) {
     const n = v.note;
     if (this.sel) {
       const sp = v.toScreen(p.X, p.Y), h = this.handles(v);
       const q = n.docToPage(this.sel.page, p.X, p.Y), b = this.selectionRect();
       const near = (a) => Math.hypot(a.x - sp.x, a.y - sp.y) <= HANDLE_PX;
-      let mode = null;
+      let mode = null, anchor = null;
+      const pc = [[b[0], b[1]], [b[2], b[1]], [b[2], b[3]], [b[0], b[3]]];     // 画面の 4 隅と同じ順
+      const ci = h.corners.findIndex((c) => near(c));
       if (near(h.rotate)) mode = 'rotate';
-      else if (near(h.scale)) mode = 'scale';
+      else if (ci >= 0) { mode = 'scale'; anchor = pc[(ci + 2) % 4]; }
       else if (q.x >= b[0] && q.x <= b[2] && q.y >= b[1] && q.y <= b[3]) mode = 'move';
       if (mode) {
-        this.drag = { mode, q0: q, b, m: null };
+        this.drag = { mode, q0: q, b, m: null, anchor };
         v.hidden = this.hideIds();
         this.app.hideSelectionBar();
         v.invalidate();
@@ -228,9 +238,10 @@ class LassoTool {
     if (this.drag) {
       const D = this.drag, q = n.docToPage(this.sel.page, p.X, p.Y), b = D.b;
       if (D.mode === 'move') D.m = { a: 1, b: 0, c: 0, d: 1, e: q.x - D.q0.x, f: q.y - D.q0.y };
-      else if (D.mode === 'scale') {
-        const k = Math.max(0.05, Math.max((q.x - b[0]) / (D.q0.x - b[0] || 1), (q.y - b[1]) / (D.q0.y - b[1] || 1)));
-        D.m = { a: k, b: 0, c: 0, d: k, e: b[0] - k * b[0], f: b[1] - k * b[1] };
+      else if (D.mode === 'scale') {         // 反対の角を止めて、対角線の向きに引いた分だけ
+        const [ax, ay] = D.anchor, vx = D.q0.x - ax, vy = D.q0.y - ay, L2 = vx * vx + vy * vy || 1;
+        const k = Math.max(0.05, ((q.x - ax) * vx + (q.y - ay) * vy) / L2);
+        D.m = { a: k, b: 0, c: 0, d: k, e: ax - k * ax, f: ay - k * ay };
       } else {
         const cx = (b[0] + b[2]) / 2, cy = (b[1] + b[3]) / 2;
         let ang = Math.atan2(q.y - cy, q.x - cx) - Math.atan2(D.q0.y - cy, D.q0.x - cx);
@@ -271,12 +282,13 @@ class LassoTool {
       let ext = 0;
       for (let i = 2; i < pts.length; i += 2) ext = Math.max(ext, Math.hypot(pts[i] - pts[0], pts[i + 1] - pts[1]));
       if (ext * v.s < 8) {            // タップ: 画像を 1 枚選ぶ（上にある方から）
-        const im = (page.images || []).slice().reverse().find((x) => !x.hidden && imageHit(x, pts[0], pts[1]));
-        this.setSel(page, [], im ? [im] : []);
+        const im = (page.images || []).slice().reverse().find((x) => this.canObj(x) && imageHit(x, pts[0], pts[1]));
+        const st = im ? null : page.strokes.slice().reverse().find((s) => this.canStroke(s) && strokeHit(s, pts[0], pts[1], 8 / v.s));
+        this.setSel(page, st ? [st] : [], im ? [im] : []);
       } else if (pts.length >= 6) {
-        const chosen = page.strokes.filter((s) => strokeInPoly(s, pts));
+        const chosen = page.strokes.filter((s) => this.canStroke(s) && strokeInPoly(s, pts));
         const imgs = (page.images || []).filter((im) => {
-          if (im.hidden) return false;
+          if (!this.canObj(im)) return false;
           const c = imageCorners(im);
           return pointInPoly(c.reduce((a, q) => a + q[0], 0) / 4, c.reduce((a, q) => a + q[1], 0) / 4, pts);
         });
@@ -329,9 +341,9 @@ class LassoTool {
     g.fillStyle = 'rgba(70,130,230,.06)'; g.fill();
     const mid = { x: (c[0].x + c[1].x) / 2, y: (c[0].y + c[1].y) / 2 };
     g.beginPath(); g.moveTo(mid.x, mid.y); g.lineTo(h.rotate.x, h.rotate.y); g.stroke();
-    for (const [q, round] of [[h.scale, false], [h.rotate, true]]) {
+    for (const [q, round] of [...c.map((x) => [x, false]), [h.rotate, true]]) {
       g.beginPath();
-      if (round) g.arc(q.x, q.y, 8, 0, Math.PI * 2); else g.rect(q.x - 8, q.y - 8, 16, 16);
+      if (round) g.arc(q.x, q.y, 8, 0, Math.PI * 2); else g.rect(q.x - 7, q.y - 7, 14, 14);
       g.fillStyle = '#fff'; g.fill(); g.strokeStyle = '#3d7be0'; g.lineWidth = 2; g.stroke();
     }
   }
@@ -364,6 +376,23 @@ class LassoTool {
     if (!this.sel || !this.sel.strokes.length) return;
     const map = new Map(this.sel.strokes.map((s) => [s.id, { ...strokeRecord(s), id: uid('s'), color, pts: s.pts }]));
     this.replace(v, '色を変更', (sb) => sb.map((s) => map.get(s.id) || s), (ib) => ib, { strokes: [...map.values()], images: this.sel.images });
+  }
+  /* 線の太さを f 倍に（文字は大きさ） */
+  thicken(v, f) {
+    if (!this.sel) return;
+    const ms = new Map(this.sel.strokes.map((s) => [s.id, { ...strokeRecord(s), id: uid('s'), w: Math.max(0.2, s.w * f), pts: s.pts }]));
+    const mi = new Map(this.sel.images.filter((o) => o.kind === 'text').map((o) => [o.id, fitTextHeight({ ...imageRecord(o), size: Math.max(4, o.size * f) })]));
+    this.replace(v, '太さ', (sb) => sb.map((s) => ms.get(s.id) || s), (ib) => ib.map((o) => mi.get(o.id) || o),
+      { strokes: [...ms.values()], images: this.sel.images.map((o) => mi.get(o.id) || o) });
+  }
+  /* 画像・文字などの重なりの順（線はいつも物の上） */
+  order(v, front) {
+    if (!this.sel || !this.sel.images.length) return;
+    const ids = new Set(this.sel.images.map((o) => o.id));
+    this.replace(v, front ? '最前面へ' : '最背面へ', (sb) => sb, (ib) => {
+      const pick = ib.filter((o) => ids.has(o.id)), rest = ib.filter((o) => !ids.has(o.id));
+      return front ? rest.concat(pick) : pick.concat(rest);
+    }, { strokes: this.sel.strokes, images: this.sel.images });
   }
   paste(v, page, at) {
     const cb = this.app.clipboard;

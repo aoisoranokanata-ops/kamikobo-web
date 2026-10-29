@@ -8,7 +8,7 @@
    ネットワーク優先。iPad のホーム画面アプリでは待機中の SW が切り替わらないことがあるので、待機させない。
    ファイルを直したら、下の VERSION と js/util.js の APP_VERSION を必ず上げること。
    ------------------------------------------------------------ */
-const VERSION = '1.0.0';
+const VERSION = '1.1.0';
 const PREFIX = 'kamikobo-web-';
 const CACHE = PREFIX + 'v' + VERSION;
 // pdf.js が日本語などの PDF に使う文字の対応表・標準フォント（オフラインでも開けるように最初に取っておく）
@@ -20,9 +20,9 @@ const VENDOR_DATA = [
 const ASSETS = [
   './', './index.html', './manifest.webmanifest', './css/app.css',
   './js/util.js', './js/store.js', './js/paper.js', './js/ink.js', './js/notebook.js', './js/view.js', './js/tools.js',
-  './js/shapes.js', './js/objects.js', './js/ruler.js', './js/zoomwin.js', './js/templates.js', './js/recorder.js', './js/ai.js', './js/pdfdoc.js', './js/exporter.js', './js/library.js', './js/app.js',
+  './js/shapes.js', './js/objects.js', './js/ruler.js', './js/zoomwin.js', './js/templates.js', './js/recorder.js', './js/pdfdoc.js', './js/exporter.js', './js/library.js', './js/app.js',
   './icons/icon-192.png', './icons/icon-512.png', './icons/apple-touch-icon.png',
-  './vendor/pdf-lib.min.js', './vendor/anthropic-sdk.min.js', './vendor/pdfjs/pdf.min.js', './vendor/pdfjs/pdf.worker.min.js',
+  './vendor/pdf-lib.min.js', './vendor/pdfjs/pdf.min.js', './vendor/pdfjs/pdf.worker.min.js',
 ].concat(VENDOR_DATA);
 
 self.addEventListener('install', (e) => {
