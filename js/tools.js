@@ -136,7 +136,8 @@ class EraserTool {
   }
 }
 
-/* なげなわ: 囲んで選ぶ → 動かす（中をドラッグ）・拡大縮小（右下の角）・回転（上の丸）。操作は浮かぶバーから。 */
+/* なげなわ: 囲んで選ぶ（画像はタップでも選べる）→ 動かす（中をドラッグ）・拡大縮小（右下の角）・回転（上の丸）。操作は浮かぶバーから。
+   選択 = {page, strokes:[...], images:[...]} */
 class LassoTool {
   constructor(app) { this.app = app; this.showsHover = false; this.poly = null; this.sel = null; this.drag = null; }
   clear(v) {
@@ -144,7 +145,11 @@ class LassoTool {
     if (v) { v.hidden = null; v.invalidate(); }
     this.app.hideSelectionBar();
   }
-  selectionRect() { return this.sel ? unionBBox(this.sel.strokes) : null; }
+  selectionRect() {
+    if (!this.sel) return null;
+    return unionBBox(this.sel.strokes.concat(this.sel.images.map((im) => ({ _bb: imageBBox(im) }))));
+  }
+  setSel(page, strokes, images) { this.sel = strokes.length || images.length ? { page, strokes, images } : null; }
   /* 選択の枠の画面上の 4 隅（ページの回転・画面の回転を含む） */
   screenCorners(v) {
     const b = this.selectionRect();
@@ -161,6 +166,7 @@ class LassoTool {
     const L = Math.hypot(mx - cx, my - cy) || 1;
     return { scale: c[2], rotate: { x: mx + ((mx - cx) / L) * 28, y: my + ((my - cy) / L) * 28 }, corners: c };
   }
+  hideIds() { return new Set(this.sel.strokes.map((s) => s.id).concat(this.sel.images.map((im) => im.id))); }
   down(p, v) {
     const n = v.note;
     if (this.sel) {
@@ -173,7 +179,7 @@ class LassoTool {
       else if (q.x >= b[0] && q.x <= b[2] && q.y >= b[1] && q.y <= b[3]) mode = 'move';
       if (mode) {
         this.drag = { mode, q0: q, b, m: null };
-        v.hidden = new Set(this.sel.strokes.map((s) => s.id));
+        v.hidden = this.hideIds();
         this.app.hideSelectionBar();
         v.invalidate();
         return;
@@ -217,11 +223,11 @@ class LassoTool {
       this.drag = null;
       v.hidden = null;
       if (D.m) {
-        const page = this.sel.page, before = page.strokes.slice();
-        const moved = new Map(this.sel.strokes.map((s) => [s.id, strokeTransformed(s, D.m)]));
-        const after = before.map((s) => moved.get(s.id) || s);
-        n.swapCmd(page, before, after, { move: '移動', scale: '拡大縮小', rotate: '回転' }[D.mode]);
-        this.sel = { page, strokes: [...moved.values()] };
+        const page = this.sel.page, sb = page.strokes.slice(), ib = (page.images || []).slice();
+        const ms = new Map(this.sel.strokes.map((s) => [s.id, strokeTransformed(s, D.m)]));
+        const mi = new Map(this.sel.images.map((im) => [im.id, imageTransformed(im, D.m)]));
+        n.swapBoth(page, sb, sb.map((s) => ms.get(s.id) || s), ib, ib.map((im) => mi.get(im.id) || im), { move: '移動', scale: '拡大縮小', rotate: '回転' }[D.mode]);
+        this.sel = { page, strokes: [...ms.values()], images: [...mi.values()] };
       }
       v.invalidate();
       this.showBar(v);
@@ -230,8 +236,19 @@ class LassoTool {
     if (this.poly) {
       const { page, pts } = this.poly;
       this.poly = null;
-      const chosen = pts.length >= 6 ? page.strokes.filter((s) => strokeInPoly(s, pts)) : [];
-      this.sel = chosen.length ? { page, strokes: chosen } : null;
+      let ext = 0;
+      for (let i = 2; i < pts.length; i += 2) ext = Math.max(ext, Math.hypot(pts[i] - pts[0], pts[i + 1] - pts[1]));
+      if (ext * v.s < 8) {            // タップ: 画像を 1 枚選ぶ（上にある方から）
+        const im = (page.images || []).slice().reverse().find((x) => imageHit(x, pts[0], pts[1]));
+        this.setSel(page, [], im ? [im] : []);
+      } else if (pts.length >= 6) {
+        const chosen = page.strokes.filter((s) => strokeInPoly(s, pts));
+        const imgs = (page.images || []).filter((im) => {
+          const c = imageCorners(im);
+          return pointInPoly(c.reduce((a, q) => a + q[0], 0) / 4, c.reduce((a, q) => a + q[1], 0) / 4, pts);
+        });
+        this.setSel(page, chosen, imgs);
+      } else this.sel = null;
       v.requestOver();
       if (this.sel) this.showBar(v); else this.app.hideSelectionBar();
     }
@@ -240,8 +257,15 @@ class LassoTool {
   showBar(v) {
     const c = this.screenCorners(v);
     if (!c) return;
+    const parts = [];
+    if (this.sel.strokes.length) parts.push(`線 ${this.sel.strokes.length}`);
+    if (this.sel.images.length) parts.push(`画像 ${this.sel.images.length}`);
     this.app.showSelectionBar(Math.min(...c.map((q) => q.x)), Math.min(...c.map((q) => q.y)), Math.max(...c.map((q) => q.x)),
-      Math.max(...c.map((q) => q.y)), this.sel.strokes.length);
+      Math.max(...c.map((q) => q.y)), parts.join('・'));
+  }
+  drawSelected(gg) {
+    for (const im of this.sel.images) drawImageItem(gg, im);
+    drawStrokes(gg, this.sel.strokes, null, { noMultiply: true });
   }
   drawOverlay(g, v) {
     if (this.poly) {
@@ -259,12 +283,9 @@ class LassoTool {
     if (!this.sel) return;
     const D = this.drag;
     if (D && D.m) {
-      v.withPage(g, this.sel.page, (gg) => {
-        gg.transform(D.m.a, D.m.b, D.m.c, D.m.d, D.m.e, D.m.f);
-        drawStrokes(gg, this.sel.strokes, null, { noMultiply: true });
-      });
+      v.withPage(g, this.sel.page, (gg) => { gg.transform(D.m.a, D.m.b, D.m.c, D.m.d, D.m.e, D.m.f); this.drawSelected(gg); });
     } else if (D) {
-      v.withPage(g, this.sel.page, (gg) => drawStrokes(gg, this.sel.strokes, null, { noMultiply: true }));
+      v.withPage(g, this.sel.page, (gg) => this.drawSelected(gg));
     }
     if (D) return;
     const h = this.handles(v), d = v.dpr, c = h.corners;
@@ -283,46 +304,44 @@ class LassoTool {
   }
 
   // ---- 選択への操作（浮かぶバーから）
+  replace(v, label, fnS, fnI, newSel) {
+    const page = this.sel.page, sb = page.strokes.slice(), ib = (page.images || []).slice();
+    v.note.swapBoth(page, sb, fnS(sb), ib, fnI(ib), label);
+    if (newSel) { this.setSel(page, newSel.strokes, newSel.images); v.invalidate(); if (this.sel) this.showBar(v); }
+  }
   remove(v) {
     if (!this.sel) return;
-    const page = this.sel.page, ids = new Set(this.sel.strokes.map((s) => s.id));
-    v.note.swapCmd(page, page.strokes.slice(), page.strokes.filter((s) => !ids.has(s.id)), '削除');
+    const ids = this.hideIds();
+    this.replace(v, '削除', (sb) => sb.filter((s) => !ids.has(s.id)), (ib) => ib.filter((im) => !ids.has(im.id)));
     this.clear(v);
   }
   copy() {
     if (!this.sel) return;
-    this.app.clipboard = { strokes: this.sel.strokes.map((s) => ({ ...strokeRecord(s), pts: s.pts.slice() })) };
-    toast(`${this.sel.strokes.length} 本の線をコピーしました`);
+    this.app.clipboard = { strokes: this.sel.strokes.map((s) => ({ ...strokeRecord(s), pts: s.pts.slice() })), images: this.sel.images.map(imageRecord) };
+    toast('コピーしました');
   }
   cut(v) { this.copy(); this.remove(v); }
   duplicate(v) {
     if (!this.sel) return;
-    const page = this.sel.page;
-    const copies = this.sel.strokes.map((s) => strokeTransformed(s, { a: 1, b: 0, c: 0, d: 1, e: 16, f: 16 }));
-    v.note.swapCmd(page, page.strokes.slice(), page.strokes.concat(copies), '複製');
-    this.sel = { page, strokes: copies };
-    v.invalidate();
-    this.showBar(v);
+    const m = { a: 1, b: 0, c: 0, d: 1, e: 16, f: 16 };
+    const cs = this.sel.strokes.map((s) => strokeTransformed(s, m)), ci = this.sel.images.map((im) => imageTransformed(im, m, false));
+    this.replace(v, '複製', (sb) => sb.concat(cs), (ib) => ib.concat(ci), { strokes: cs, images: ci });
   }
   recolor(v, color) {
-    if (!this.sel) return;
-    const page = this.sel.page, before = page.strokes.slice();
+    if (!this.sel || !this.sel.strokes.length) return;
     const map = new Map(this.sel.strokes.map((s) => [s.id, { ...strokeRecord(s), id: uid('s'), color, pts: s.pts }]));
-    v.note.swapCmd(page, before, before.map((s) => map.get(s.id) || s), '色を変更');
-    this.sel = { page, strokes: [...map.values()] };
-    v.invalidate();
-    this.showBar(v);
+    this.replace(v, '色を変更', (sb) => sb.map((s) => map.get(s.id) || s), (ib) => ib, { strokes: [...map.values()], images: this.sel.images });
   }
   paste(v, page, at) {
     const cb = this.app.clipboard;
-    if (!cb || !cb.strokes.length) return false;
-    const b = unionBBox(cb.strokes);
+    const imgs = cb ? cb.images || [] : [];
+    if (!cb || !(cb.strokes.length || imgs.length)) return false;
+    const b = unionBBox(cb.strokes.concat(imgs.map((im) => ({ _bb: imageBBox(im) }))));
     const dx = at ? at.x - (b[0] + b[2]) / 2 : 20, dy = at ? at.y - (b[1] + b[3]) / 2 : 20;
-    const copies = cb.strokes.map((s) => strokeTransformed(s, { a: 1, b: 0, c: 0, d: 1, e: dx, f: dy }));
-    v.note.swapCmd(page, page.strokes.slice(), page.strokes.concat(copies), '貼り付け');
-    this.sel = { page, strokes: copies };
-    v.invalidate();
-    this.showBar(v);
+    const m = { a: 1, b: 0, c: 0, d: 1, e: dx, f: dy };
+    const cs = cb.strokes.map((s) => strokeTransformed(s, m)), ci = imgs.map((im) => imageTransformed(im, m, false));
+    this.sel = { page, strokes: [], images: [] };
+    this.replace(v, '貼り付け', (sb) => sb.concat(cs), (ib) => ib.concat(ci), { strokes: cs, images: ci });
     return true;
   }
 }

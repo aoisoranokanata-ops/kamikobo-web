@@ -22,9 +22,13 @@ class Note {
   get board() { return this.item.kind === 'board'; }
 
   static async load(item) {
-    const recs = await Store.getPages(item.pageIds);
+    const [recs, texts] = await Promise.all([Store.getPages(item.pageIds), Store.getTexts(item.id)]);
+    const tmap = new Map(texts.map((r) => [r.pageId, r.text]));
     const pages = recs.map((r, i) => r || blankPage(item, item.pageIds[i]));
-    for (const p of pages) { p.noteId = item.id; p.strokes = p.strokes || []; }
+    for (const p of pages) {
+      p.noteId = item.id; p.strokes = p.strokes || []; p.images = p.images || [];
+      if (tmap.has(p.id)) p.text = tmap.get(p.id);
+    }
     return new Note(item, pages);
   }
 
@@ -103,6 +107,12 @@ class Note {
     this.push({ label, redo: () => apply(after), undo: () => apply(before) }, false);
     apply(after);
   }
+  /* 線と画像をいっしょに入れ替える（なげなわで画像も動かしたとき） */
+  swapBoth(page, sBefore, sAfter, iBefore, iAfter, label) {
+    const apply = (s, i) => { page.strokes = s.slice(); page.images = i.slice(); this.touch(page); };
+    this.push({ label, redo: () => apply(sAfter, iAfter), undo: () => apply(sBefore, iBefore) }, false);
+    apply(sAfter, iAfter);
+  }
   push(cmd, run = true) {
     if (run) cmd.redo();
     this.undoStack.push(cmd);
@@ -142,10 +152,19 @@ class Note {
     this.structCmd('ページを削除', () => this.pages.splice(this.pages.indexOf(p), 1));
   }
   duplicatePage(p) {
-    const q = { ...pageRecord(p), id: uid('p'), noteId: this.item.id };
-    q.strokes = p.strokes.map((s) => ({ ...strokeRecord(s), id: uid('s'), pts: s.pts.slice() }));
+    const q = copyPage(p, this.item.id);
     this.structCmd('ページを複製', () => this.pages.splice(this.pages.indexOf(p) + 1, 0, q));
     return q;
+  }
+  /* よそ（PDF・別のノート）から来たページを at の位置に入れる */
+  insertPages(at, list, label = 'ページを挿入') {
+    for (const q of list) { q.noteId = this.item.id; q.strokes = q.strokes || []; q.images = q.images || []; }
+    this.structCmd(label, () => this.pages.splice(at, 0, ...list));
+  }
+  removePages(list, label = 'ページを削除') {
+    if (list.length >= this.pages.length) throw new Error('ページは 1 枚以上必要です');
+    const kill = new Set(list);
+    this.structCmd(label, () => { this.pages = this.pages.filter((p) => !kill.has(p)); });
   }
   movePage(p, to) {
     this.structCmd('ページを移動', () => {
@@ -165,7 +184,9 @@ class Note {
 
   // ---- 保存
   async save() {
-    const pages = this.pages.filter((p) => this.dirty.has(p.id)).map(pageRecord);
+    const dirtyPages = this.pages.filter((p) => this.dirty.has(p.id));
+    const pages = dirtyPages.map(pageRecord);
+    const texts = dirtyPages.filter((p) => p.text !== undefined).map((p) => ({ pageId: p.id, noteId: this.item.id, text: p.text || '' }));
     if (!pages.length && !this.itemDirty && !this.removed.length) return false;
     const live = new Set(this.pages.map((p) => p.id));
     const gone = [...new Set(this.removed.concat(this._known ? [...this._known].filter((id) => !live.has(id)) : []))];
@@ -175,7 +196,7 @@ class Note {
     this.itemDirty = false;
     this.removed = [];
     try {
-      await Store.saveNote(this.item, pages, gone);
+      await Store.saveNote(this.item, pages, gone, texts);
     } catch (e) {
       for (const p of pages) this.dirty.add(p.id);
       this.itemDirty = true;
@@ -193,8 +214,17 @@ function blankPage(item, id, like = null) {
   return {
     id, noteId: item.id, w: like ? like.w : w, h: like ? like.h : h, rot: like ? like.rot || 0 : 0,
     paper: like ? like.paper : { ...(item.paper || { type: 'ruled', color: 'white' }) },
-    infinite: item.kind === 'board', strokes: [],
+    infinite: item.kind === 'board', strokes: [], images: [],
   };
+}
+
+/* ページの写し（線・画像・PDF の下地・文字ごと。id は新しく） */
+function copyPage(p, noteId) {
+  const q = { ...pageRecord(p), id: uid('p'), noteId };
+  q.strokes = p.strokes.map((s) => ({ ...strokeRecord(s), id: uid('s'), pts: s.pts.slice() }));
+  q.images = (p.images || []).map((im) => ({ ...imageRecord(im), id: uid('m') }));
+  if (p.text !== undefined) q.text = p.text;
+  return q;
 }
 
 /* 新しいノート（またはホワイトボード）を作って保存する */
@@ -206,5 +236,18 @@ async function createNote({ name, parent, kind = 'paged', paper, size = 'A4', la
   for (let i = 0; i < (kind === 'board' ? 1 : Math.max(1, pages)); i++) list.push(blankPage(item, uid('p')));
   item.pageIds = list.map((p) => p.id);
   await Store.saveNote(item, list.map(pageRecord));
+  return item;
+}
+
+/* 出来上がったページの並びから新しいノートを作る（PDF の読み込み・結合・抽出・分割） */
+async function createNoteFromPages({ name, parent, pages, paper, size, thumb }) {
+  const now = Date.now();
+  const item = { id: uid('n'), type: 'note', kind: 'paged', parent: parent || 'root', name: name || '無題のノート',
+    created: now, updated: now, trashed: false, paper: paper || { type: 'blank', color: 'white' }, size: size || 'A4', landscape: false, pageIds: [] };
+  for (const p of pages) { p.noteId = item.id; p.strokes = p.strokes || []; p.images = p.images || []; }
+  item.pageIds = pages.map((p) => p.id);
+  if (thumb) item.thumb = thumb;
+  const texts = pages.filter((p) => p.text).map((p) => ({ pageId: p.id, noteId: item.id, text: p.text }));
+  await Store.saveNote(item, pages.map(pageRecord), [], texts);
   return item;
 }

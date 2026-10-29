@@ -156,14 +156,21 @@ class NoteView {
     const vr = this.visibleDocRect();
     const hide = this.hidden;
     const visible = (list) => (hide && hide.size ? list.filter((s) => !hide.has(s.id)) : list);
+    g.imageSmoothingQuality = 'high';
     if (n.board) {
       const p = n.pages[0];
       drawBoardPaper(g, p, vr, this.s);
+      drawImages(g, p, hide);
       drawStrokes(g, visible(p.strokes), [vr.x0, vr.y0, vr.x1, vr.y1], { minW: 0.8 / this.s });
       return;
     }
+    const midY = (vr.y0 + vr.y1) / 2;
     for (const p of n.pages) {
       const r = p.disp;
+      if (p.bg && r.y < vr.y1 + r.h && r.y + r.h > vr.y0 - r.h) {       // 前後 1 ページも先に描いておく
+        const near = r.x > vr.x1 || r.x + r.w < vr.x0 || r.y > vr.y1 || r.y + r.h < vr.y0;
+        if (near) BgRender.want(p, Math.min(this.s * d, BgRender.capK(p)), null, 10 + Math.abs(r.y + r.h / 2 - midY) / 1000);
+      }
       if (r.x > vr.x1 || r.x + r.w < vr.x0 || r.y > vr.y1 || r.y + r.h < vr.y0) continue;
       g.save();
       g.shadowColor = 'rgba(0,0,0,.35)';
@@ -179,7 +186,14 @@ class NoteView {
       drawPaper(g, p, this.s);
       // 見えている範囲をページの座標で
       const c1 = n.docToPage(p, vr.x0, vr.y0), c2 = n.docToPage(p, vr.x1, vr.y1);
-      drawStrokes(g, visible(p.strokes), [Math.min(c1.x, c2.x), Math.min(c1.y, c2.y), Math.max(c1.x, c2.x), Math.max(c1.y, c2.y)], { minW: 0.8 / this.s });
+      const clip = [Math.min(c1.x, c2.x), Math.min(c1.y, c2.y), Math.max(c1.x, c2.x), Math.max(c1.y, c2.y)];
+      if (p.bg) {
+        BgRender.draw(g, p);
+        BgRender.want(p, this.s * d, [Math.max(0, clip[0]), Math.max(0, clip[1]), Math.min(p.w, clip[2]), Math.min(p.h, clip[3])],
+          Math.abs(r.y + r.h / 2 - midY) / 1000);
+      }
+      drawImages(g, p, hide);
+      drawStrokes(g, visible(p.strokes), clip, { minW: 0.8 / this.s });
       g.restore();
     }
   }
@@ -189,6 +203,16 @@ class NoteView {
     g.clearRect(0, 0, this.over.width, this.over.height);
     const n = this.note;
     if (!n) return;
+    const mk = this.app.searchMarks;
+    if (mk) for (const p of n.pages) {
+      const polys = mk.get(p.id);
+      if (!polys || !polys.length) continue;
+      this.withPage(g, p, (gg) => {
+        gg.beginPath();
+        for (const q of polys) { gg.moveTo(q[0], q[1]); for (let i = 2; i < q.length; i += 2) gg.lineTo(q[i], q[i + 1]); gg.closePath(); }
+        gg.fillStyle = 'rgba(255,170,0,.38)'; gg.fill();
+      });
+    }
     const tool = this.app.tool;
     if (tool && tool.drawOverlay) tool.drawOverlay(g, this);
     if (this.hover && tool && tool.showsHover && this.mode !== 'tool') tool.drawHover(g, this, this.hover);

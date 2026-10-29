@@ -1,5 +1,6 @@
 'use strict';
-/* 本棚: フォルダ（サブフォルダは何段でも）とノートの一覧・新規作成・名前・移動・複製・色・ゴミ箱・並べ替え・題名の検索。 */
+/* 本棚: フォルダ（サブフォルダは何段でも）とノートの一覧・新規作成・読み込み・名前・移動・複製・結合・書き出し・色・ゴミ箱・並べ替え・
+   検索（名前と、ページの中の文字）。 */
 
 const FOLDER_COLORS = ['#5b8def', '#e0864a', '#4caf7a', '#c65bd6', '#e05a6a', '#8a8f99', '#d8b13a'];
 
@@ -17,10 +18,41 @@ class Library {
     $('#lib-trash').addEventListener('click', () => this.open('trash'));
     $('#lib-settings').addEventListener('click', () => this.app.settingsDialog());
     const q = $('#lib-search');
-    q.addEventListener('input', () => { this.query = q.value.trim(); this.render(); });
+    q.addEventListener('input', () => { this.query = q.value.trim(); this.render(); this.searchTextsSoon(); });
+    this.texts = null;            // ページの文字（検索の時に読み込む）
+    this.textHits = [];
+    this.searchTextsSoon = debounce(() => this.searchTexts(), 250);
+    // ファイルを落として読み込む
+    this.root.addEventListener('dragover', (e) => { if (e.dataTransfer && [...e.dataTransfer.types].includes('Files')) e.preventDefault(); });
+    this.root.addEventListener('drop', (e) => {
+      if (!e.dataTransfer || !e.dataTransfer.files.length) return;
+      e.preventDefault();
+      this.app.importFiles([...e.dataTransfer.files]);
+    });
   }
 
-  async refresh() { this.items = await Store.allItems(); this.render(); }
+  async refresh() { this.items = await Store.allItems(); this.texts = null; this.render(); if (this.query) this.searchTexts(); }
+  /* ページの中の文字から探す（ノートごとに、当たったページの数と最初の一節） */
+  async searchTexts() {
+    const q = this.query;
+    if (!q) { this.textHits = []; return; }
+    if (!this.texts) this.texts = await Store.allTexts();
+    if (q !== this.query) return;
+    const nq = normText(q).trim();
+    const byNote = new Map();
+    for (const r of this.texts) {
+      if (!r.text || !normText(r.text).includes(nq)) continue;
+      const it = this.byId(r.noteId);
+      if (!it || it.trashed || this.path(it.parent).some((f) => f.trashed)) continue;
+      const idx = (it.pageIds || []).indexOf(r.pageId);
+      if (idx < 0) continue;
+      const h = byNote.get(it.id) || { it, pages: [] };
+      h.pages.push({ idx, text: r.text });
+      byNote.set(it.id, h);
+    }
+    this.textHits = [...byNote.values()].map((h) => { h.pages.sort((a, b) => a.idx - b.idx); return h; }).sort((a, b) => b.it.updated - a.it.updated);
+    this.render();
+  }
   byId(id) { return this.items.find((it) => it.id === id); }
   children(folderId) { return this.items.filter((it) => it.parent === folderId && !it.trashed); }
   path(id) {
@@ -57,10 +89,31 @@ class Library {
       g.append(el('div', { class: 'shelf-note' }, list.length ? 'ゴミ箱の中身（元に戻すか、完全に削除できます）' : 'ゴミ箱は空です',
         list.length ? el('button', { class: 'danger small', onclick: () => this.emptyTrash() }, 'ゴミ箱を空にする') : null));
     }
-    if (!list.length && this.folder !== 'trash') {
-      g.append(el('div', { class: 'shelf-empty' }, this.query ? '見つかりませんでした' : 'ここにはまだ何もありません。右上の「＋ 新規」から作れます。'));
+    if (!list.length && this.folder !== 'trash' && !(this.query && this.textHits.length)) {
+      g.append(el('div', { class: 'shelf-empty' }, this.query ? '見つかりませんでした' :
+        'ここにはまだ何もありません。右上の「＋ 新規」から作るか、PDF・画像を読み込めます（ファイルをここに落としても読み込めます）。'));
     }
     for (const it of list) g.append(this.card(it));
+    if (this.query && this.textHits.length) {
+      g.append(el('div', { class: 'shelf-note wide' }, `ページの中の文字に「${this.query}」があるノート`));
+      for (const h of this.textHits) {
+        const first = h.pages[0], sn = snippetOf(first.text, this.query) || { before: '', hit: '', after: '' };
+        const where = h.it.parent !== 'root' ? this.path(h.it.parent).map((f) => f.name).join(' › ') + ' › ' : '';
+        const row = el('button', { class: 'texthit' },
+          h.it.thumb ? el('img', { src: h.it.thumb, alt: '' }) : el('span', { class: 'th-blank' }),
+          el('span', { class: 'th-body' },
+            el('span', { class: 'th-name' }, el('span', { class: 'muted' }, where), h.it.name),
+            el('span', { class: 'th-snip' }, `${first.idx + 1} ページ: `, sn.before, el('b', {}, sn.hit), sn.after),
+            el('span', { class: 'muted small' }, h.pages.length > 1 ? `ほか ${h.pages.length - 1} ページ` : '')));
+        row.addEventListener('click', async () => {
+          const q = this.query;
+          await this.app.openNote(h.it.id);
+          this.app.openSearch(q);
+          this.app.showHit(first.idx, q);
+        });
+        g.append(row);
+      }
+    }
   }
 
   renderCrumbs() {
@@ -114,8 +167,16 @@ class Library {
       { label: '名前を変更', fn: () => this.rename(it) },
       { label: '移動…', fn: () => this.moveDialog([it]) },
     ];
-    if (it.type === 'note') items.push({ label: '複製', fn: () => this.duplicate(it) });
-    if (it.type === 'folder') items.push({ label: '色…', fn: () => this.colorMenu(it, anchor) });
+    if (it.type === 'note') {
+      items.push({ label: '複製', fn: () => this.duplicate(it) });
+      if (it.kind !== 'board') items.push({ label: 'ほかのノートと結合…', fn: () => this.mergeDialog(it) });
+      items.push(null, { label: '📄 PDF に書き出す・共有', fn: () => this.exportPdfOf(it) });
+      items.push({ label: '🗂 ファイルで書き出す（.kmkw）', fn: () => this.exportFileOf(it) });
+    }
+    if (it.type === 'folder') {
+      items.push({ label: '色…', fn: () => this.colorMenu(it, anchor) });
+      items.push({ label: '🗂 フォルダごとファイルで書き出す（.kmkw）', fn: () => this.exportFileOf(it) });
+    }
     items.push(null, { label: 'ゴミ箱へ', danger: true, fn: () => this.trash(it) });
     popMenu(anchor, items);
   }
@@ -130,6 +191,9 @@ class Library {
       { label: '📓 新しいノート', fn: () => this.app.newNoteDialog('paged') },
       { label: '∞ 無限キャンバス', fn: () => this.app.newNoteDialog('board') },
       { label: '📁 新しいフォルダ', fn: () => this.newFolder() },
+      null,
+      { label: '📄 PDF・画像を読み込む', fn: async () => { const f = await pickFiles('application/pdf,.pdf,image/*,.kmkw'); if (f.length) this.app.importFiles(f); } },
+      { label: '🗂 紙工房ファイル（.kmkw）・バックアップを読み込む', fn: () => this.app.restorePick() },
     ]);
   }
   sortMenu(anchor) {
@@ -159,14 +223,53 @@ class Library {
     this.render();
   }
   async duplicate(it) {
-    const pages = (await Store.getPages(it.pageIds)).filter(Boolean);
+    const src = await Note.load(it);
     const now = Date.now();
     const copy = { ...it, id: uid('n'), name: it.name + ' のコピー', created: now, updated: now };
-    const newPages = pages.map((p) => ({ ...p, id: uid('p'), noteId: copy.id, strokes: p.strokes.map((s) => ({ ...s, id: uid('s') })) }));
+    const newPages = src.pages.map((p) => copyPage(p, copy.id));
     copy.pageIds = newPages.map((p) => p.id);
-    await Store.saveNote(copy, newPages);
+    await Store.saveNote(copy, newPages.map(pageRecord), [], newPages.filter((p) => p.text).map((p) => ({ pageId: p.id, noteId: copy.id, text: p.text })));
     await this.refresh();
     toast('複製しました');
+  }
+  /* 結合: 選んだ順に後ろへつなげた新しいノートを作る（元のノートはそのまま） */
+  async mergeDialog(it) {
+    const order = [];
+    const notes = this.items.filter((x) => x.type === 'note' && !x.trashed && x.id !== it.id && x.kind !== 'board').sort((a, b) => b.updated - a.updated);
+    if (!notes.length) { toast('ほかのノートがありません'); return; }
+    const list = el('div', { class: 'folder-tree' });
+    const draw = () => {
+      list.innerHTML = '';
+      list.append(el('div', { class: 'tree-row on' }, '1. ', it.name, el('span', { class: 'muted' }, '（はじめ）')));
+      for (const x of notes) {
+        const k = order.indexOf(x.id);
+        const b = el('button', { class: 'tree-row' + (k >= 0 ? ' on' : '') }, k >= 0 ? `${k + 2}. ` : '　 ', x.name);
+        b.addEventListener('click', () => { if (k >= 0) order.splice(k, 1); else order.push(x.id); draw(); });
+        list.append(b);
+      }
+    };
+    draw();
+    const ok = await modal('ほかのノートと結合', el('div', {}, el('p', { class: 'muted' }, 'つなげるノートを順に選んでください。元のノートはそのまま残り、結合した新しいノートができます。'), list),
+      [{ label: 'キャンセル', value: null }, { label: '結合', primary: true, value: 'ok', check: () => order.length > 0 }]);
+    if (ok !== 'ok') return;
+    const pages = [];
+    let first = null;
+    for (const id of [it.id, ...order]) {
+      const nt = await Note.load(this.byId(id));
+      if (!first) first = nt.pages[0];
+      pages.push(...nt.pages.map((p) => copyPage(p, '')));
+    }
+    const item = await createNoteFromPages({ name: it.name + ' ほか', parent: it.parent, pages, size: it.size, thumb: it.thumb });
+    await this.refresh();
+    toast(`「${item.name}」を作りました（${pages.length} ページ）`);
+  }
+  async exportPdfOf(it) {
+    const nt = await Note.load(it);
+    await this.app.exportPages(nt.board ? [boardAsPage(nt.pages[0])] : nt.pages, it.name);
+  }
+  async exportFileOf(it) {
+    const blob = await buildBackup([it.id], it.type === 'folder' ? 'folder' : 'note');
+    await offerFile(blob, safeName(it.name) + '.kmkw');
   }
   async trash(it) {
     it.trashed = true; it.trashedAt = Date.now();

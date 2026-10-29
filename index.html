@@ -48,6 +48,9 @@
       <button data-tool="hand" title="手のひら（スペース）">✋</button>
     </div>
     <div class="tb-right">
+      <button id="btn-search" class="ghost" title="ノートの中を検索（⌘F）">🔍</button>
+      <button id="btn-insert" class="ghost" title="画像・PDF を挿入">🖼</button>
+      <button id="btn-share" class="ghost" title="PDF に書き出す・共有">⤴</button>
       <button id="btn-undo" class="ghost" title="元に戻す（⌘Z）">↶</button>
       <button id="btn-redo" class="ghost" title="やり直す（⇧⌘Z）">↷</button>
       <button id="btn-addpage" class="ghost" title="後ろにページを追加">＋</button>
@@ -69,8 +72,19 @@
     <button id="sel-del" class="danger">削除</button>
   </div>
   <aside id="pagepanel" class="pagepanel" hidden>
-    <div class="pp-head"><span>ページ</span><button id="pp-add" class="small">＋ 最後に追加</button><button id="pp-close" class="ghost">✕</button></div>
+    <div class="pp-head"><span>ページ</span><button id="pp-select" class="small">選ぶ</button><button id="pp-add" class="small">＋ 最後に追加</button><button id="pp-close" class="ghost">✕</button></div>
+    <div id="pp-selbar" class="pp-selbar" hidden>
+      <span id="pp-selcount" class="muted"></span>
+      <button data-act="pdf" class="small">PDF</button>
+      <button data-act="extract" class="small">新しいノートへ</button>
+      <button data-act="rotate" class="small">↻</button>
+      <button data-act="delete" class="small danger">削除</button>
+    </div>
     <div id="pp-list" class="pp-list"></div>
+  </aside>
+  <aside id="searchpanel" class="pagepanel searchpanel" hidden>
+    <div class="pp-head"><input id="sp-input" type="search" placeholder="ノートの中の文字を検索" autocomplete="off"><button id="sp-close" class="ghost">✕</button></div>
+    <div id="sp-list" class="sp-list"></div>
   </aside>
   <div id="badge" class="badge"></div>
 </section>
@@ -84,6 +98,8 @@
 <script src="js/notebook.js"></script>
 <script src="js/view.js"></script>
 <script src="js/tools.js"></script>
+<script src="js/pdfdoc.js"></script>
+<script src="js/exporter.js"></script>
 <script src="js/library.js"></script>
 <script src="js/app.js"></script>
 </body>

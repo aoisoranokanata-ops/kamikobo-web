@@ -30,8 +30,13 @@ class App {
     this.library = new Library(this);
     this.saveSoon = debounce(() => this.saveNote(), 700);
     this.saveViewSoon = debounce(() => this.saveView(), 600);
+    this.searchMarks = null;          // ページ id → 当たった所の四角形（検索）
+    this.panelSel = null;             // ページ一覧で選んだページの id（選ぶモードの時）
+    BgRender.onReady = () => { this.view.invalidate(); };
+    ImageCache.onReady = () => { this.view.invalidate(); };
     this.bindEditor();
     this.bindKeys();
+    this.bindDrop();
     document.addEventListener('visibilitychange', () => { if (document.hidden) this.saveNote(true); });
     window.addEventListener('pagehide', () => this.saveNote(true));
   }
@@ -62,6 +67,9 @@ class App {
     saveJSON('session', { open: id });
     this.tools.lasso.clear(null);
     this.hideSelectionBar();
+    this.searchMarks = null;
+    this.panelSel = null;
+    this.closeSearch();
     this.view.resize();
     this.view.fit(false);
     if (!this.note.board && item.lastPage) this.view.goToPage(item.lastPage);
@@ -78,6 +86,7 @@ class App {
     $('#editor').hidden = true;
     $('#library').hidden = false;
     this.closePanel();
+    this.closeSearch();
     await this.library.refresh();
   }
   async saveNote(now = false, withThumb = false) {
@@ -217,10 +226,11 @@ class App {
   }
 
   // ================= なげなわの浮かぶバー
-  showSelectionBar(x0, y0, x1, y1, count) {
+  showSelectionBar(x0, y0, x1, y1, label) {
     const bar = $('#selbar');
     bar.hidden = false;
-    $('#sel-count').textContent = `${count} 本`;
+    $('#sel-count').textContent = label;
+    $('#sel-color').hidden = !(this.tools.lasso.sel && this.tools.lasso.sel.strokes.length);
     const r = this.view.over.getBoundingClientRect();
     const bw = bar.offsetWidth || 320, bh = bar.offsetHeight || 40;
     let x = r.left + (x0 + x1) / 2 - bw / 2, y = r.top + y0 - bh - 34;
@@ -267,6 +277,7 @@ class App {
       { label: '後ろにページを追加', fn: () => this.addPageAfter() },
       { label: 'このページを複製', fn: () => { n.duplicatePage(p); this.afterPageChange(); } },
       { label: 'このページを削除', danger: true, fn: () => this.deletePage(p) },
+      { label: 'ここで分割（このページから後ろを新しいノートへ）', fn: () => this.splitAt(n.pageIndex(p)) },
       null,
       { label: '用紙を変更…', fn: () => this.paperDialog() },
       { label: 'ページの一覧', fn: () => this.openPanel() },
@@ -284,27 +295,292 @@ class App {
     this.afterPageChange();
   }
 
-  /* ページの一覧（右から出る）: タップで移動、ボタンで回転・複製・削除・並べ替え */
-  openPanel() { $('#pagepanel').hidden = false; this.refreshPanel(); }
-  closePanel() { const p = $('#pagepanel'); if (p) p.hidden = true; }
+  /* ページの一覧（右から出る）: タップで移動、ボタンで回転・複製・削除・並べ替え。「選ぶ」で複数のページをまとめて */
+  openPanel() { this.closeSearch(); $('#pagepanel').hidden = false; this.refreshPanel(); }
+  closePanel() { const p = $('#pagepanel'); if (p) p.hidden = true; this.panelSel = null; }
   refreshPanel() {
     const panel = $('#pagepanel');
     if (!panel || panel.hidden || !this.note) return;
     const list = $('#pp-list');
     list.innerHTML = '';
-    const n = this.note, cur = this.view.currentPageIndex();
+    const n = this.note, cur = this.view.currentPageIndex(), sel = this.panelSel;
+    $('#pp-select').textContent = sel ? '完了' : '選ぶ';
+    $('#pp-selbar').hidden = !sel;
+    if (sel) $('#pp-selcount').textContent = `${sel.size} 枚`;
+    if (this._ppObs) this._ppObs.disconnect();
+    this._ppObs = new IntersectionObserver((ents) => {
+      for (const e of ents) {
+        if (!e.isIntersecting || e.target.dataset.done) continue;
+        e.target.dataset.done = '1';
+        const p = n.pages.find((q) => q.id === e.target.dataset.pid);
+        if (p) this.thumbAsync(p, 160).then((u) => { e.target.src = u; });
+      }
+    }, { root: list, rootMargin: '300px' });
     n.pages.forEach((p, i) => {
-      const img = el('img', { src: makeThumb(n, p, 160), alt: '' });
-      const row = el('div', { class: 'pp-item' + (i === cur ? ' on' : '') }, img,
-        el('div', { class: 'pp-no' }, String(i + 1)),
-        el('div', { class: 'pp-actions' },
+      const img = el('img', { alt: '', 'data-pid': p.id });
+      this._ppObs.observe(img);
+      const chk = sel ? el('span', { class: 'pp-check' + (sel.has(p.id) ? ' on' : '') }, sel.has(p.id) ? '✓' : '') : null;
+      const row = el('div', { class: 'pp-item' + (i === cur && !sel ? ' on' : '') + (sel && sel.has(p.id) ? ' picked' : '') }, img,
+        el('div', { class: 'pp-no' }, String(i + 1)), chk,
+        sel ? null : el('div', { class: 'pp-actions' },
           el('button', { title: '上へ', disabled: i === 0, onclick: (e) => { e.stopPropagation(); n.movePage(p, i - 1); this.afterPageChange(); } }, '▲'),
           el('button', { title: '下へ', disabled: i === n.pages.length - 1, onclick: (e) => { e.stopPropagation(); n.movePage(p, i + 1); this.afterPageChange(); } }, '▼'),
           el('button', { title: '右に回転', onclick: (e) => { e.stopPropagation(); n.rotatePage(p, 90); this.afterPageChange(); } }, '↻'),
           el('button', { title: '複製', onclick: (e) => { e.stopPropagation(); n.duplicatePage(p); this.afterPageChange(); } }, '⧉'),
           el('button', { title: '削除', class: 'danger', onclick: (e) => { e.stopPropagation(); this.deletePage(p); } }, '✕')));
-      row.addEventListener('click', () => { this.view.goToPage(i); this.updateStatus(); this.refreshPanel(); });
+      row.addEventListener('click', () => {
+        if (sel) { if (sel.has(p.id)) sel.delete(p.id); else sel.add(p.id); this.refreshPanel(); return; }
+        this.view.goToPage(i); this.updateStatus(); this.refreshPanel();
+      });
       list.append(row);
+    });
+  }
+  selectedPages() { const s = this.panelSel; return s ? this.note.pages.filter((p) => s.has(p.id)) : []; }
+  async panelAction(kind) {
+    const n = this.note, pages = this.selectedPages();
+    if (!pages.length) { toast('ページを選んでください'); return; }
+    if (kind === 'pdf') await this.exportPages(pages, `${n.item.name}（${pages.length} ページ）`);
+    else if (kind === 'extract') {
+      const item = await createNoteFromPages({ name: n.item.name + '（抜き出し）', parent: n.item.parent, pages: pages.map((p) => copyPage(p, '')), size: n.item.size });
+      item.thumb = await this.thumbAsync(pages[0], 220); await Store.putItem(item);
+      toast(`「${item.name}」を作りました（${pages.length} ページ）`);
+    } else if (kind === 'rotate') {
+      n.structCmd('ページを回転', () => { for (const p of pages) p.rot = ((p.rot || 0) + 90) % 360; });
+      this.afterPageChange();
+    } else if (kind === 'delete') {
+      if (pages.length >= n.pages.length) { toast('すべてのページは消せません', { error: true }); return; }
+      if (!await confirmBox('ページを削除', `${pages.length} ページを削除します（元に戻すで戻せます）。`, '削除', true)) return;
+      n.removePages(pages);
+      this.panelSel = new Set();
+      this.afterPageChange();
+    }
+  }
+  /* このページから後ろを新しいノートへ */
+  async splitAt(i) {
+    const n = this.note;
+    if (i <= 0) { toast('2 ページ目以降で分割してください'); return; }
+    const tail = n.pages.slice(i);
+    if (!await confirmBox('ここで分割', `${i + 1} ページ目から後ろ（${tail.length} ページ）を新しいノートに移します。`, '分割')) return;
+    const item = await createNoteFromPages({ name: n.item.name + '（2）', parent: n.item.parent, pages: tail.map((p) => copyPage(p, '')), size: n.item.size });
+    item.thumb = await this.thumbAsync(tail[0], 220); await Store.putItem(item);
+    n.removePages(tail, '分割');
+    this.afterPageChange();
+    toast(`「${item.name}」を作りました`);
+  }
+
+  /* 小さな絵（PDF の下地は描き終わるのを待つ） */
+  async thumbAsync(p, W) {
+    if (p.bg) { try { await BgRender.ensure(p, Math.min(1, (W * 2) / p.w)); } catch { /* 白のまま */ } }
+    const tmp = this.note && this.note.pages.includes(p) ? this.note : new Note({ kind: 'paged' }, [p]);
+    return makeThumb(tmp, p, W);
+  }
+
+  // ================= 挿入（画像・PDF・ほかのノート）
+  insertMenu(anchor) {
+    const n = this.note;
+    const items = [{ label: '🖼 画像（写真・ファイル）', fn: () => this.insertImagesPick() }];
+    if (!n.board) {
+      items.push({ label: '📄 PDF を後ろに挿入', fn: () => this.insertPdfPick() });
+      items.push({ label: '📓 ほかのノートを後ろに挿入', fn: () => this.insertNotePick() });
+    }
+    popMenu(anchor, items);
+  }
+  async insertImagesPick() {
+    const files = (await pickFiles('image/*')).filter((f) => /^image\//.test(f.type) || /\.(jpe?g|png|gif|webp|heic|heif)$/i.test(f.name));
+    if (files.length) await this.insertImages(files);
+  }
+  /* 画像を今のページ（無限キャンバスは見ている所）に置いて、なげなわで選んだ状態にする */
+  async insertImages(files, at = null) {
+    const n = this.note, v = this.view;
+    if (!n) return;
+    const C = at || v.toDocLocal(v.cssW / 2, v.cssH / 2);
+    const hit = n.pageAt(C.x, C.y, 1e9), page = hit.page;
+    const q = n.docToPage(page, C.x, C.y);
+    const added = [];
+    let off = 0;
+    for (const f of files) {
+      try {
+        const r = await storeImage(f);
+        const maxW = page.infinite ? 360 / v.s : page.w * 0.6, maxH = page.infinite ? 360 / v.s : page.h * 0.5;
+        const k = Math.min(maxW / r.w, maxH / r.h, page.infinite ? 1 / v.s : 1);
+        const w = r.w * k, h = r.h * k;
+        let x = q.x - w / 2 + off, y = q.y - h / 2 + off;
+        if (!page.infinite) { x = clamp(x, 0, Math.max(0, page.w - w)); y = clamp(y, 0, Math.max(0, page.h - h)); }
+        added.push({ id: uid('m'), src: r.src, x, y, w, h, rot: 0 });
+        off += 14;
+      } catch (e) { toast(`${f.name}: ${e.message || e}`, { error: true }); }
+    }
+    if (!added.length) return;
+    n.swapBoth(page, page.strokes.slice(), page.strokes.slice(), (page.images || []).slice(), (page.images || []).concat(added), '画像を貼る');
+    this.setTool('lasso');
+    this.tools.lasso.setSel(page, [], added);
+    v.invalidate();
+    this.tools.lasso.showBar(v);
+    this.updateStatus();
+  }
+  async insertPdfPick() {
+    const files = (await pickFiles('application/pdf,.pdf', false)).filter((f) => /pdf$/i.test(f.type) || /\.pdf$/i.test(f.name));
+    if (!files.length) return;
+    const n = this.note, at = this.view.currentPageIndex() + 1;
+    const pr = progressBox('PDF を読み込んでいます');
+    try {
+      const pages = await pagesFromPdf(files[0], (i, k) => pr.set(i, k));
+      n.insertPages(at, pages, 'PDF を挿入');
+      this.afterPageChange();
+      this.view.goToPage(at);
+      toast(`${pages.length} ページを挿入しました`);
+    } catch (e) { toast(e.message || String(e), { error: true, ms: 6000 }); } finally { pr.close(); }
+  }
+  async insertNotePick() {
+    const n = this.note;
+    const notes = this.library.items.filter((it) => it.type === 'note' && !it.trashed && it.id !== n.item.id && it.kind !== 'board');
+    if (!notes.length) { toast('ほかのノートがありません'); return; }
+    const id = await this.pickNoteDialog('挿入するノート', notes);
+    if (!id) return;
+    const other = await Note.load(await Store.getItem(id));
+    const at = this.view.currentPageIndex() + 1;
+    n.insertPages(at, other.pages.map((p) => copyPage(p, n.item.id)), 'ノートを挿入');
+    this.afterPageChange();
+    this.view.goToPage(at);
+    toast(`${other.pages.length} ページを挿入しました`);
+  }
+  /* ノートを 1 つ選ぶ（フォルダの場所つき） */
+  async pickNoteDialog(title, notes) {
+    let chosen = null;
+    const list = el('div', { class: 'folder-tree' });
+    for (const it of notes.sort((a, b) => b.updated - a.updated)) {
+      const where = it.parent !== 'root' ? this.library.path(it.parent).map((f) => f.name).join(' › ') + ' › ' : '';
+      const b = el('button', { class: 'tree-row' }, '📓 ', el('span', { class: 'muted' }, where), it.name);
+      b.addEventListener('click', () => { chosen = it.id; for (const x of $$('.tree-row', list)) x.classList.remove('on'); b.classList.add('on'); });
+      list.append(b);
+    }
+    const ok = await modal(title, list, [{ label: 'キャンセル', value: null }, { label: '選ぶ', primary: true, value: 'ok' }]);
+    return ok === 'ok' ? chosen : null;
+  }
+
+  // ================= 書き出し・共有
+  shareMenu(anchor) {
+    popMenu(anchor, [
+      { label: '📄 PDF に書き出す・共有…', fn: () => this.exportDialog() },
+      { label: '🗂 このノートをファイルで（紙工房 Web で開ける .kmkw）', fn: () => this.exportNoteFile() },
+    ]);
+  }
+  async exportDialog() {
+    const n = this.note;
+    if (n.board) { await this.exportPages([boardAsPage(n.pages[0])], n.item.name); return; }
+    const range = el('select', {}, el('option', { value: 'all' }, `すべてのページ（${n.pages.length}）`), el('option', { value: 'cur' }, `このページ（${this.view.currentPageIndex() + 1}）`),
+      el('option', { value: 'custom' }, 'ページを指定…'));
+    const spec = el('input', { type: 'text', placeholder: '例: 1-3, 5', class: 'wide', hidden: true });
+    range.addEventListener('change', () => { spec.hidden = range.value !== 'custom'; });
+    const paper = el('input', { type: 'checkbox', checked: true });
+    const v = await modal('PDF に書き出す', el('div', { class: 'settings' }, el('label', { class: 'field' }, '範囲', range, spec),
+      el('label', { class: 'row' }, paper, ' 用紙の罫線・方眼も入れる'),
+      el('p', { class: 'muted' }, '手書きはベクターのまま入ります（拡大してもきれい）。読み込んだ PDF の文字はそのまま選べます。')),
+    [{ label: 'キャンセル', value: null }, { label: '書き出す', primary: true, value: 'ok' }]);
+    if (v !== 'ok') return;
+    let pages = n.pages;
+    if (range.value === 'cur') pages = [n.pages[this.view.currentPageIndex()]];
+    else if (range.value === 'custom') {
+      pages = parsePageSpec(spec.value, n.pages.length).map((i) => n.pages[i]);
+      if (!pages.length) { toast('ページの指定が読めません', { error: true }); return; }
+    }
+    await this.exportPages(pages, n.item.name, { paper: paper.checked });
+  }
+  async exportPages(pages, name, opt = {}) {
+    await this.saveNote(true);
+    const pr = progressBox('PDF を作っています');
+    let bytes;
+    try { bytes = await exportPdf(pages, { title: name, paper: opt.paper !== false, onProgress: (i, k) => pr.set(i, k) }); }
+    catch (e) { console.error(e); toast('PDF を作れませんでした: ' + (e.message || e), { error: true, ms: 6000 }); return; } finally { pr.close(); }
+    await offerFile(new Blob([bytes], { type: 'application/pdf' }), safeName(name) + '.pdf');
+  }
+  async exportNoteFile() {
+    await this.saveNote(true);
+    const blob = await buildBackup([this.note.item.id], 'note');
+    await offerFile(blob, safeName(this.note.item.name) + '.kmkw');
+  }
+
+  // ================= ノートの中の検索
+  openSearch(q = '') {
+    this.closePanel();
+    const box = $('#searchpanel');
+    box.hidden = false;
+    const inp = $('#sp-input');
+    if (q) inp.value = q;
+    this.runSearch();
+    if (!q) setTimeout(() => inp.focus(), 30);
+  }
+  closeSearch() {
+    const box = $('#searchpanel');
+    if (box) box.hidden = true;
+    if (this.searchMarks) { this.searchMarks = null; this.view.requestOver(); }
+  }
+  runSearch() {
+    const n = this.note, q = $('#sp-input').value.trim(), list = $('#sp-list');
+    list.innerHTML = '';
+    this.searchMarks = null;
+    this.view.requestOver();
+    if (!n) return;
+    const withText = n.pages.filter((p) => p.text);
+    if (!q) {
+      list.append(el('div', { class: 'sp-hint muted' }, withText.length ? `文字のあるページ: ${withText.length} / ${n.pages.length}` :
+        'このノートには検索できる文字がありません（読み込んだ PDF の文字を探せます。手書きの文字はフェーズ6で AI に読ませて探せるようにします）'));
+      return;
+    }
+    let count = 0;
+    const hits = [];
+    n.pages.forEach((p, i) => {
+      if (!p.text) return;
+      const sn = snippetOf(p.text, q);
+      if (!sn) return;
+      hits.push(i);
+      count++;
+      const row = el('button', { class: 'sp-row' }, el('span', { class: 'sp-page' }, `${i + 1}`),
+        el('span', { class: 'sp-snip' }, sn.before, el('b', {}, sn.hit), sn.after));
+      row.addEventListener('click', () => this.showHit(i, q));
+      list.append(row);
+    });
+    if (!count) list.append(el('div', { class: 'sp-hint muted' }, '見つかりませんでした'));
+    else list.prepend(el('div', { class: 'sp-hint muted' }, `${count} ページで見つかりました`));
+    this._hits = hits;
+  }
+  async showHit(i, q) {
+    const n = this.note, p = n.pages[i];
+    this.view.goToPage(i);
+    this.updateStatus();
+    try {
+      const polys = await PdfText.findPolys(p, q);
+      this.searchMarks = new Map([[p.id, polys]]);
+      // 当たった所が見えるように
+      if (polys.length) {
+        const pm = n.pageMatrix(p), q0 = polys[0], V = this.view;
+        const cx = (q0[0] + q0[4]) / 2, cy = (q0[1] + q0[5]) / 2;
+        const sp = V.toScreen(pm.a * cx + pm.c * cy + pm.e, pm.b * cx + pm.d * cy + pm.f);
+        const right = V.cssW - ($('#searchpanel').hidden ? 0 : $('#searchpanel').offsetWidth) - 30;
+        if (sp.y > V.cssH * 0.7 || sp.y < 40) V.oy += V.cssH * 0.35 - sp.y;
+        if (sp.x > right || sp.x < 30) V.ox += (right + 30) / 2 - sp.x;
+        V.fitted = false;
+        V.clampScroll();
+      }
+      this.view.invalidate();
+    } catch (e) { console.warn(e); }
+  }
+
+  // ================= 貼り付け・落とす（画像・PDF）
+  bindDrop() {
+    const stage = $('#stage');
+    stage.addEventListener('dragover', (e) => { if (this.note && e.dataTransfer && [...e.dataTransfer.types].includes('Files')) e.preventDefault(); });
+    stage.addEventListener('drop', (e) => {
+      if (!this.note || !e.dataTransfer) return;
+      e.preventDefault();
+      const files = [...e.dataTransfer.files];
+      const imgs = files.filter((f) => /^image\//.test(f.type));
+      if (imgs.length) this.insertImages(imgs, this.view.toDoc(e.clientX, e.clientY));
+    });
+    document.addEventListener('paste', (e) => {
+      if (!this.note || e.target.closest('input,textarea') || $('.modal-back')) return;
+      const files = [...(e.clipboardData ? e.clipboardData.files : [])].filter((f) => /^image\//.test(f.type));
+      if (files.length) { e.preventDefault(); this.insertImages(files); }
     });
   }
 
@@ -398,8 +674,79 @@ class App {
       el('label', { class: 'field' }, '2 本指でタップ', sel('twoFinger', [['eraser', '消しゴムに切り替え（もう一度で戻る）／3本指で元に戻す'], ['undo', '元に戻す／3本指でやり直す']])),
       chk('rotateGesture', '2 本指で画面も回す'),
       chk('fitPage', '「画面に合わせる」でページ全体を表示（オフ = 幅に合わせる）'),
+      el('div', { class: 'field' }, 'バックアップ',
+        el('div', { class: 'row-buttons' },
+          el('button', { onclick: () => this.backupAll() }, '本棚をまるごと書き出す（.kmkw）'),
+          el('button', { onclick: () => this.restorePick() }, 'バックアップ・.kmkw を読み込む')),
+        el('span', { class: 'muted small' }, 'データはこの iPad のブラウザの中にあります。ときどき書き出して「ファイル」や iCloud Drive に置いておくと安心です。')),
       el('p', { class: 'muted' }, `紙工房 Web ${APP_VERSION}　${used}`));
     await modal('設定', body, [{ label: '閉じる', primary: true, value: true }], { wide: true });
+  }
+
+  async backupAll() {
+    closeModals();
+    await this.saveNote(true);
+    const pr = progressBox('バックアップを作っています');
+    let blob;
+    try { blob = await buildBackup(null, 'library'); } catch (e) { toast('書き出せませんでした: ' + (e.message || e), { error: true }); return; } finally { pr.close(); }
+    await offerFile(blob, `紙工房バックアップ_${fmtDate(Date.now()).slice(0, 10).replace(/\//g, '')}.kmkw`);
+  }
+  async restorePick() {
+    closeModals();
+    const files = await pickFiles('', false);
+    if (files.length) await this.importFiles(files);
+  }
+  /* 本棚への読み込み: PDF → 1 冊ずつ、画像 → まとめて 1 冊（1 枚 1 ページ）、.kmkw → 復元 */
+  async importFiles(files, parent = null) {
+    parent = parent || this.library.currentFolderForNew();
+    const pdfs = files.filter((f) => /pdf$/i.test(f.type) || /\.pdf$/i.test(f.name));
+    const imgs = files.filter((f) => /^image\//.test(f.type) || /\.(jpe?g|png|gif|webp|heic|heif)$/i.test(f.name));
+    const kmkw = files.filter((f) => /\.kmkw$/i.test(f.name));
+    const other = files.filter((f) => !pdfs.includes(f) && !imgs.includes(f) && !kmkw.includes(f));
+    let made = 0, lastId = null;
+    for (const f of pdfs) {
+      const pr = progressBox(`「${f.name}」を読み込んでいます`);
+      try {
+        const pages = await pagesFromPdf(f, (i, k) => pr.set(i, k));
+        const item = await createNoteFromPages({ name: f.name.replace(/\.pdf$/i, ''), parent, pages });
+        item.thumb = await this.thumbAsync(pages[0], 220);
+        await Store.putItem(item);
+        made++; lastId = item.id;
+      } catch (e) { toast(`${f.name}: ${e.message || e}`, { error: true, ms: 6000 }); } finally { pr.close(); }
+    }
+    if (imgs.length) {
+      const pr = progressBox('画像を読み込んでいます');
+      try {
+        const pages = [];
+        for (let i = 0; i < imgs.length; i++) {
+          pr.set(i, imgs.length);
+          try {
+            const r = await storeImage(imgs[i]);
+            const W = 595, H = Math.round((595 * r.h) / r.w);
+            pages.push({ id: uid('p'), w: W, h: H, rot: 0, infinite: false, paper: { type: 'blank', color: 'white' }, strokes: [],
+              images: [{ id: uid('m'), src: r.src, x: 0, y: 0, w: W, h: H, rot: 0 }] });
+          } catch (e) { toast(`${imgs[i].name}: ${e.message || e}`, { error: true }); }
+        }
+        if (pages.length) {
+          const name = imgs.length === 1 ? imgs[0].name.replace(/\.[^.]+$/, '') : `画像 ${pages.length} 枚`;
+          const item = await createNoteFromPages({ name, parent, pages });
+          await new Promise((r) => setTimeout(r, 300));       // 画像の読み込みを待って小さな絵を作る
+          item.thumb = await this.thumbAsync(pages[0], 220);
+          await Store.putItem(item);
+          made++; lastId = item.id;
+        }
+      } finally { pr.close(); }
+    }
+    for (const f of kmkw) {
+      try {
+        const r = await restoreBackup(f, parent);
+        toast(r.kind === 'library' ? `バックアップから ${r.notes} 冊を「復元」フォルダに戻しました` : `「${f.name}」を読み込みました`);
+        made++;
+      } catch (e) { toast(`${f.name}: ${e.message || e}`, { error: true, ms: 6000 }); }
+    }
+    if (other.length) toast(`読み込めない種類のファイルです: ${other.map((f) => f.name).join('、')}`, { error: true, ms: 5000 });
+    await this.library.refresh();
+    if (made === 1 && lastId && !kmkw.length) await this.openNote(lastId);
   }
 
   // ================= その他の UI
@@ -432,6 +779,15 @@ class App {
     $('#btn-addpage').addEventListener('click', () => this.addPageAfter());
     $('#btn-pages').addEventListener('click', () => ($('#pagepanel').hidden ? this.openPanel() : this.closePanel()));
     $('#btn-more').addEventListener('click', (e) => this.pageMenu(e.currentTarget));
+    $('#btn-search').addEventListener('click', () => ($('#searchpanel').hidden ? this.openSearch() : this.closeSearch()));
+    $('#btn-insert').addEventListener('click', (e) => this.insertMenu(e.currentTarget));
+    $('#btn-share').addEventListener('click', (e) => this.shareMenu(e.currentTarget));
+    $('#sp-close').addEventListener('click', () => this.closeSearch());
+    const runSoon = debounce(() => this.runSearch(), 220);
+    $('#sp-input').addEventListener('input', runSoon);
+    $('#sp-input').addEventListener('keydown', (e) => { if (e.key === 'Enter' && this._hits && this._hits.length) this.showHit(this._hits[0], $('#sp-input').value.trim()); });
+    $('#pp-select').addEventListener('click', () => { this.panelSel = this.panelSel ? null : new Set(); this.refreshPanel(); });
+    for (const b of $$('#pp-selbar [data-act]')) b.addEventListener('click', () => this.panelAction(b.dataset.act));
     $('#pp-close').addEventListener('click', () => this.closePanel());
     $('#pp-add').addEventListener('click', () => { const n = this.note; n.addPage(n.pages.length); this.afterPageChange(); this.view.goToPage(n.pages.length - 1); });
     const L = () => this.tools.lasso, V = () => this.view;
@@ -454,7 +810,8 @@ class App {
       if (mod && k === 'y') { e.preventDefault(); this.redo(); return; }
       if (mod && k === 'c' && this.tools.lasso.sel) { e.preventDefault(); this.tools.lasso.copy(); return; }
       if (mod && k === 'x' && this.tools.lasso.sel) { e.preventDefault(); this.tools.lasso.cut(this.view); return; }
-      if (mod && k === 'v') { e.preventDefault(); this.paste(); return; }
+      if (mod && k === 'v') { if (this.clipboard) { e.preventDefault(); this.paste(); } return; }     // 画像の貼り付けは paste の出来事で
+      if (mod && k === 'f') { e.preventDefault(); this.openSearch(); return; }
       if ((k === 'delete' || k === 'backspace') && this.tools.lasso.sel) { e.preventDefault(); this.tools.lasso.remove(this.view); return; }
       if (mod) return;
       const map = { p: 'pen', h: 'hl', e: 'eraser', l: 'lasso', ' ': 'hand' };
@@ -472,12 +829,27 @@ function longPress(elm, fn, ms = 480) {
   elm.addEventListener('pointercancel', stop);
 }
 
+/* "1-3, 5" → [0,1,2,4] */
+function parsePageSpec(s, n) {
+  const out = [];
+  for (const part of String(s).replace(/[，、]/g, ',').replace(/[－ー〜~]/g, '-').split(',')) {
+    const m = part.trim().match(/^(\d+)\s*(?:-\s*(\d+))?$/);
+    if (!m) continue;
+    let a = parseInt(m[1], 10), b = m[2] ? parseInt(m[2], 10) : a;
+    if (a > b) [a, b] = [b, a];
+    for (let i = Math.max(1, a); i <= Math.min(n, b); i++) if (!out.includes(i - 1)) out.push(i - 1);
+  }
+  return out;
+}
+function closeModals() { for (const m of $$('.modal-back')) m.remove(); }
+
 /* ページの小さな絵（dataURL）。無限キャンバスは書いた範囲 */
 function makeThumb(note, p, W) {
   if (!p) return '';
   let r;
   if (p.infinite) {
-    r = p.strokes.length ? unionBBox(p.strokes) : [-300, -200, 300, 200];
+    const things = p.strokes.concat((p.images || []).map((im) => ({ _bb: imageBBox(im) })));
+    r = things.length ? unionBBox(things) : [-300, -200, 300, 200];
     const pad = 30;
     r = [r[0] - pad, r[1] - pad, r[2] + pad, r[3] + pad];
     const w = r[2] - r[0], h = r[3] - r[1], need = (w * 4) / 3;
@@ -491,12 +863,15 @@ function makeThumb(note, p, W) {
   if (p.infinite) {
     g.setTransform(k, 0, 0, k, -r[0] * k, -r[1] * k);
     drawBoardPaper(g, p, { x0: r[0], y0: r[1], x1: r[2], y1: r[3] }, k);
+    drawImages(g, p);
     drawStrokes(g, p.strokes, null, { minW: 0.9 / k });
   } else {
     const pm = note.pageMatrix(p);
     g.setTransform(k, 0, 0, k, -p.disp.x * k, -p.disp.y * k);
     g.transform(pm.a, pm.b, pm.c, pm.d, pm.e, pm.f);
     drawPaper(g, p, k * 1.5);
+    if (p.bg) BgRender.draw(g, p);
+    drawImages(g, p);
     drawStrokes(g, p.strokes, null, { minW: 0.9 / k });
   }
   return c.toDataURL('image/jpeg', 0.82);

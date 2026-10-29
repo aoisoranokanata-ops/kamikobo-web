@@ -136,3 +136,30 @@ label.row { display: flex; margin: 6px 0; }
   .tb-tools button { width: 40px; }
   .tb-right button { width: 38px; }
 }
+
+/* ---- フェーズ2: 検索・ページの選択・進み具合・読み込み */
+.small { font-size: 12px; }
+.searchpanel { width: 320px; }
+.searchpanel .pp-head input { flex: 1; min-width: 0; }
+.sp-list { flex: 1; overflow-y: auto; -webkit-overflow-scrolling: touch; padding: 6px 8px 20px; display: flex; flex-direction: column; gap: 4px; }
+.sp-hint { padding: 8px 6px; font-size: 13px; }
+.sp-row { display: flex; gap: 10px; align-items: flex-start; text-align: left; background: transparent; border-color: transparent; padding: 8px 6px; font-size: 13px; }
+.sp-row:hover, .sp-row:active { background: var(--panel2); }
+.sp-page { flex: none; min-width: 28px; text-align: center; font-weight: 700; color: var(--accent); }
+.sp-snip { color: var(--muted); word-break: break-all; }
+.sp-snip b, .th-snip b { color: #ffd166; font-weight: 700; }
+.pp-selbar { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; padding: 8px 10px; border-bottom: 1px solid var(--line); }
+.pp-selbar .muted { flex: 1 0 100%; font-size: 12px; }
+.pp-item.picked img { border-color: var(--accent); opacity: .85; }
+.pp-check { position: absolute; top: 6px; right: 22px; width: 26px; height: 26px; border-radius: 50%; border: 2px solid #fff; background: rgba(0,0,0,.35);
+  display: flex; align-items: center; justify-content: center; font-weight: 700; }
+.pp-check.on { background: var(--accent); }
+.prog { height: 8px; border-radius: 4px; background: var(--panel2); overflow: hidden; margin: 10px 0 6px; min-width: 260px; }
+.prog i { display: block; height: 100%; width: 0; background: var(--accent); transition: width .15s; }
+.row-buttons { display: flex; flex-wrap: wrap; gap: 8px; margin: 4px 0; }
+.shelf-note.wide { margin-top: 14px; font-weight: 600; color: var(--text); }
+.texthit { grid-column: 1 / -1; display: flex; gap: 12px; align-items: center; text-align: left; background: var(--panel); padding: 8px 12px; }
+.texthit img, .texthit .th-blank { width: 44px; height: 58px; object-fit: cover; border-radius: 3px; background: #fff; flex: none; }
+.th-body { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.th-name { font-weight: 600; }
+.th-snip { font-size: 13px; color: var(--muted); }
