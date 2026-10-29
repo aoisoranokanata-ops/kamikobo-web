@@ -1,0 +1,90 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<title>紙工房 Web</title>
+<meta name="description" content="iPad で使う手書きノート・PDF 書き込みアプリ">
+<meta name="theme-color" content="#2a2c31">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="紙工房">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+<link rel="icon" href="icons/icon-192.png">
+<link rel="stylesheet" href="css/app.css">
+</head>
+<body>
+
+<!-- 本棚 -->
+<section id="library">
+  <header class="libbar">
+    <div class="brand"><img src="icons/icon-192.png" alt=""><span>紙工房</span></div>
+    <nav id="lib-crumbs" class="crumbs"></nav>
+    <input id="lib-search" type="search" placeholder="ノート・フォルダを検索" autocomplete="off">
+    <button id="lib-sort" class="ghost" title="並べ替え">⇅</button>
+    <button id="lib-trash" class="ghost" title="ゴミ箱">🗑</button>
+    <button id="lib-settings" class="ghost" title="設定">⚙</button>
+    <button id="lib-new" class="primary">＋ 新規</button>
+  </header>
+  <main id="shelf" class="shelf"></main>
+</section>
+
+<!-- ノート -->
+<section id="editor" hidden>
+  <header class="topbar">
+    <div class="tb-left">
+      <button id="btn-back" class="ghost" title="本棚へ">‹ 本棚</button>
+      <button id="note-title" class="title" title="名前を変更"></button>
+      <span id="page-ind" class="muted"></span>
+      <span id="save-state" class="save-state"></span>
+    </div>
+    <div id="tools" class="tb-tools">
+      <button data-tool="pen" title="ペン（P）。もう一度押すとペンの種類">✒️</button>
+      <button data-tool="hl" title="蛍光ペン（H）">🖍</button>
+      <button data-tool="eraser" title="消しゴム（E）">◻︎</button>
+      <button data-tool="lasso" title="なげなわ（L）">➰</button>
+      <button data-tool="hand" title="手のひら（スペース）">✋</button>
+    </div>
+    <div class="tb-right">
+      <button id="btn-undo" class="ghost" title="元に戻す（⌘Z）">↶</button>
+      <button id="btn-redo" class="ghost" title="やり直す（⇧⌘Z）">↷</button>
+      <button id="btn-addpage" class="ghost" title="後ろにページを追加">＋</button>
+      <button id="btn-pages" class="ghost" title="ページの一覧">▤</button>
+      <button id="btn-more" class="ghost" title="ページ・設定">⋯</button>
+    </div>
+  </header>
+  <div id="quick" class="quick"></div>
+  <div id="stage">
+    <canvas id="base"></canvas>
+    <canvas id="over"></canvas>
+  </div>
+  <div id="selbar" class="selbar" hidden>
+    <span id="sel-count" class="muted"></span>
+    <button id="sel-color">色</button>
+    <button id="sel-dup">複製</button>
+    <button id="sel-copy">コピー</button>
+    <button id="sel-cut">切り取り</button>
+    <button id="sel-del" class="danger">削除</button>
+  </div>
+  <aside id="pagepanel" class="pagepanel" hidden>
+    <div class="pp-head"><span>ページ</span><button id="pp-add" class="small">＋ 最後に追加</button><button id="pp-close" class="ghost">✕</button></div>
+    <div id="pp-list" class="pp-list"></div>
+  </aside>
+  <div id="badge" class="badge"></div>
+</section>
+
+<div id="update-bar" class="update-bar" hidden>新しい版になりました <button onclick="location.reload()">読み込み直す</button><button class="ghost" onclick="this.parentElement.hidden=true">✕</button></div>
+
+<script src="js/util.js"></script>
+<script src="js/store.js"></script>
+<script src="js/paper.js"></script>
+<script src="js/ink.js"></script>
+<script src="js/notebook.js"></script>
+<script src="js/view.js"></script>
+<script src="js/tools.js"></script>
+<script src="js/library.js"></script>
+<script src="js/app.js"></script>
+</body>
+</html>
