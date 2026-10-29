@@ -26,6 +26,7 @@ class NoteView {
     this._baseKey = '';
     this.fitted = true;
     this.momentum = null;
+    this.ruler = new Ruler(this);
 
     new ResizeObserver(() => this.resize()).observe(over);
     over.addEventListener('pointerdown', (e) => this.onDown(e));
@@ -142,7 +143,10 @@ class NoteView {
   render() {
     const n = this.note;
     const key = n ? `${n.version}|${this.s}|${this.rot}|${this.ox}|${this.oy}|${this.cssW}|${this.cssH}|${this.hidden ? this.hidden.size : 0}` : '';
-    if (this._baseDirty || key !== this._baseKey) { this.renderBase(); this._baseKey = key; this._baseDirty = false; }
+    if (this._baseDirty || key !== this._baseKey) {
+      this.renderBase(); this._baseKey = key; this._baseDirty = false;
+      if (this.app.zoomWin && this.app.zoomWin.open) this.app.zoomWin.request();
+    }
     this.renderOver();
   }
   renderBase() {
@@ -160,7 +164,7 @@ class NoteView {
     if (n.board) {
       const p = n.pages[0];
       drawBoardPaper(g, p, vr, this.s);
-      drawImages(g, p, hide);
+      drawImages(g, p, hide, { screen: true });
       drawStrokes(g, visible(p.strokes), [vr.x0, vr.y0, vr.x1, vr.y1], { minW: 0.8 / this.s });
       return;
     }
@@ -192,7 +196,7 @@ class NoteView {
         BgRender.want(p, this.s * d, [Math.max(0, clip[0]), Math.max(0, clip[1]), Math.min(p.w, clip[2]), Math.min(p.h, clip[3])],
           Math.abs(r.y + r.h / 2 - midY) / 1000);
       }
-      drawImages(g, p, hide);
+      drawImages(g, p, hide, { screen: true });
       drawStrokes(g, visible(p.strokes), clip, { minW: 0.8 / this.s });
       g.restore();
     }
@@ -213,8 +217,12 @@ class NoteView {
         gg.fillStyle = 'rgba(255,170,0,.38)'; gg.fill();
       });
     }
+    if (this.app.zoomWin) this.app.zoomWin.drawMarker(g, this);
     const tool = this.app.tool;
     if (tool && tool.drawOverlay) tool.drawOverlay(g, this);
+    if (tool !== this.app.tools.laser && this.app.tools.laser.trails.length) this.app.tools.laser.drawOverlay(g, this);
+    this.ruler.draw(g);
+    if (this.app.tools.text.edit) this.app.tools.text.place(this);
     if (this.hover && tool && tool.showsHover && this.mode !== 'tool') tool.drawHover(g, this, this.hover);
   }
   /* 文書の空間の g（上の canvas）: ページの座標で描く時は withPage */
@@ -247,6 +255,25 @@ class NoteView {
     try { this.over.setPointerCapture(e.pointerId); } catch { /* */ }
     const lp = this.local(e);
     this.pointers.set(e.pointerId, { x: lp.x, y: lp.y, type: e.pointerType });
+    if (this.app.tools.text.edit && this.app.toolName !== 'text') this.app.tools.text.commit(this);
+    // 定規: 1本指（ペン・マウスは真ん中）でつかんで動かす、2本目の指で回す
+    const R = this.ruler;
+    if (R.visible) {
+      if (this.mode === 'ruler' && e.pointerType === 'touch') {
+        const a = this.pointers.get(this.gesture.id), b = this.pointers.get(e.pointerId);
+        if (a && b) {
+          this.mode = 'rulerRot';
+          this.gesture = { ids: [this.gesture.id, e.pointerId], ang0: Math.atan2(b.y - a.y, b.x - a.x), rang: R.ang,
+            mid: { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 }, cx: R.cx, cy: R.cy };
+          return;
+        }
+      }
+      if (!this.mode && (e.pointerType === 'touch' ? this.touchCount() === 1 && R.hit(lp.x, lp.y) : R.grip(lp.x, lp.y))) {
+        this.mode = 'ruler';
+        this.gesture = { id: e.pointerId, sx: lp.x, sy: lp.y, cx: R.cx, cy: R.cy };
+        return;
+      }
+    }
     const st = this.app.settings;
     if (e.pointerType === 'pen' && st.fingerDraws === 'auto') {
       st.fingerDraws = false;
@@ -307,6 +334,19 @@ class NoteView {
     const lp = this.local(e);
     const ptr = this.pointers.get(e.pointerId);
     if (ptr) { ptr.x = lp.x; ptr.y = lp.y; }
+    if (this.mode === 'ruler' || this.mode === 'rulerRot') {
+      const G = this.gesture, R = this.ruler;
+      if (this.mode === 'ruler') { if (e.pointerId === G.id) { R.cx = G.cx + lp.x - G.sx; R.cy = G.cy + lp.y - G.sy; this.requestOver(); } return; }
+      const a = this.pointers.get(G.ids[0]), b = this.pointers.get(G.ids[1]);
+      if (!a || !b) return;
+      let ang = G.rang + Math.atan2(b.y - a.y, b.x - a.x) - G.ang0;
+      const snap = Math.round(ang / (Math.PI / 12)) * (Math.PI / 12);
+      if (Math.abs(ang - snap) < (2.5 * Math.PI) / 180) ang = snap;
+      R.ang = ang;
+      R.cx = G.cx + (a.x + b.x) / 2 - G.mid.x; R.cy = G.cy + (a.y + b.y) / 2 - G.mid.y;
+      this.requestOver();
+      return;
+    }
     if (this.mode === 'pinch') {
       if (e.pointerType !== 'touch') return;
       const G = this.gesture;
@@ -366,13 +406,14 @@ class NoteView {
     const had = this.pointers.has(e.pointerId);
     this.pointers.delete(e.pointerId);
     if (!had) return;
+    if (this.mode === 'ruler' || this.mode === 'rulerRot') { if (!this.pointers.size) { this.mode = null; this.gesture = null; } return; }
     if (this.mode === 'pinch') { if (this.touchCount() === 0) this.endGesture(); return; }
     if (this.mode === 'pan') {
       const G = this.gesture;
       if (G && e.pointerId === G.id) {
         this.mode = null; this.gesture = null;
         if (G.moved) this.startMomentum(G.hist);
-        else if (e.pointerType === 'touch' && this.app.onTapEmpty) this.app.onTapEmpty();
+        else { const lp = this.local(e); this.app.onTap(this.toDocLocal(lp.x, lp.y), e.pointerType); }
       }
       return;
     }

@@ -7,7 +7,7 @@
    線は {id, tool:'pen'|'hl', pen:'ball'|'fountain'|'brush', color, w, op, pts: Float32Array [x,y,p,t,...]}
    画像は {id, src, x, y, w, h (pt), rot(ラジアン、中心まわり)}
    blobs: キー 'src|…'（PDF・画像の中身）→ {type, name, data: ArrayBuffer}
-   texts: {pageId, noteId, text}（PDF の文字。本棚の文字検索用に、ページとは別に軽く持つ）
+   texts: {pageId, noteId, text(PDF の文字), obj(文字・付箋・スタンプの文字)}（本棚の文字検索用に、ページとは別に軽く持つ）
    （構造化複製でそのまま入る。Blob は使わない＝iPad の WebKit で失敗することがあるため） */
 
 const Store = {
@@ -69,7 +69,7 @@ const Store = {
       si.put(item);
       for (const p of pages) sp.put(p);
       for (const id of removedPageIds) { sp.delete(id); st.delete(id); }
-      for (const r of texts) { if (r.text) st.put(r); else st.delete(r.pageId); }
+      for (const r of texts) { if (r.text || r.obj) st.put(r); else st.delete(r.pageId); }
     });
   },
   async getTexts(noteId) { return this.tx(['texts'], 'readonly', (s) => this.req(s.index('noteId').getAll(noteId))); },
@@ -122,10 +122,17 @@ function pageRecord(pg) {
   const r = { id: pg.id, noteId: pg.noteId, w: pg.w, h: pg.h, rot: pg.rot || 0, infinite: !!pg.infinite, paper: pg.paper,
     strokes: pg.strokes.map(strokeRecord) };
   if (pg.bg) r.bg = { src: pg.bg.src, page: pg.bg.page, vt: pg.bg.vt };
+  if (pg.mark) r.mark = { ...pg.mark };
   if (pg.images && pg.images.length) r.images = pg.images.map(imageRecord);
   return r;
 }
-function imageRecord(im) { return { id: im.id, src: im.src, x: im.x, y: im.y, w: im.w, h: im.h, rot: im.rot || 0 }; }
+/* ページに置く物（画像・文字・スタンプ・リンク）。表示用のキャッシュ（_ で始まる）は落とす */
+function imageRecord(im) {
+  const r = {};
+  for (const k of Object.keys(im)) if (k[0] !== '_' && im[k] !== undefined) r[k] = im[k];
+  r.rot = im.rot || 0;
+  return r;
+}
 function strokeRecord(s) {
   return { id: s.id, tool: s.tool, pen: s.pen, color: s.color, w: s.w, op: s.op, t0: s.t0 || 0, pts: s.pts };
 }

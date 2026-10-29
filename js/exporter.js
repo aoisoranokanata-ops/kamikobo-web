@@ -154,6 +154,7 @@ async function exportPdf(pages, opt = {}) {
   }
 
   const gsCache = new Map(), imgCache = new Map();
+  const links = [], outPage = new Map();     // リンク（最後にまとめて）・ページ id → 書き出したページ
   for (let i = 0; i < pages.length; i++) {
     const p = pages[i];
     let page, vt, baseRot = 0;
@@ -168,6 +169,7 @@ async function exportPdf(pages, opt = {}) {
       vt = [1, 0, 0, -1, 0, p.h];
     }
     page.node.normalize();                      // 元の中身を q … Q で包む（後から足す命令が狂わないように）
+    outPage.set(p.id, page);
     page.setRotation(L.degrees((((baseRot + (p.rot || 0)) % 360) + 360) % 360));
     const ops = ['q', `${matInv(vt).map(fmtN).join(' ')} cm`];
     const gsName = (op, multiply) => {
@@ -203,7 +205,14 @@ async function exportPdf(pages, opt = {}) {
       } else drawPaper(pc, p, 2);
       for (const t of pc.texts) ops[t.mark] = (await putImage(t.canvas, t)).join('\n');
     }
-    for (const im of p.images || []) ops.push(...await putImage(im.src, im, im.rot || 0));
+    for (const im of p.images || []) {
+      const k = im.kind || 'image';
+      if (k === 'image') ops.push(...await putImage(im.src, im, im.rot || 0));
+      else if (k === 'text' || k === 'stamp') {       // 日本語の字形を埋め込まずに済むよう、細かい画像で
+        const { canvas, pad } = objectCanvas(im, 4);
+        ops.push(...await putImage(canvas, { x: im.x - pad, y: im.y - pad, w: im.w + pad * 2, h: im.h + pad * 2 }, im.rot || 0));
+      } else if (k === 'link') links.push({ page, vt, o: im });
+    }
     for (const pass of ['hl', 'pen']) {
       for (const s of p.strokes) {
         if (s.tool !== pass) continue;
@@ -217,6 +226,32 @@ async function exportPdf(pages, opt = {}) {
     page.node.addContentStream(ref);
     if (opt.onProgress) opt.onProgress(i + 1, pages.length);
     if (i % 8 === 7) await new Promise((r) => setTimeout(r, 0));     // 画面を固めない
+  }
+  // リンク（ページへ・URL へ）
+  for (const { page, vt, o } of links) {
+    const iv = matInv(vt), cs = imageCorners(o).map(([x, y]) => [iv[0] * x + iv[2] * y + iv[4], iv[1] * x + iv[3] * y + iv[5]]);
+    const rect = [Math.min(...cs.map((c) => c[0])), Math.min(...cs.map((c) => c[1])), Math.max(...cs.map((c) => c[0])), Math.max(...cs.map((c) => c[1]))];
+    const to = o.to || {};
+    const dict = { Type: 'Annot', Subtype: 'Link', Rect: rect, Border: [0, 0, 0] };
+    if (to.page) { const tp = outPage.get(to.page); if (!tp) continue; dict.Dest = [tp.ref, 'Fit']; }
+    else if (to.url) dict.A = ctx.obj({ Type: 'Action', S: 'URI', URI: L.PDFString.of(to.url) });
+    else continue;
+    page.node.addAnnot(ctx.register(ctx.obj(dict)));
+  }
+  // しおり → PDF のしおり（目次）
+  const marks = pages.filter((p) => p.mark && outPage.get(p.id));
+  if (marks.length) {
+    const root = ctx.nextRef();
+    const refs = marks.map(() => ctx.nextRef());
+    marks.forEach((p, i) => {
+      const d = { Title: L.PDFHexString.fromText(p.mark.title || 'しおり'), Parent: root, Dest: [outPage.get(p.id).ref, 'Fit'] };
+      if (i > 0) d.Prev = refs[i - 1];
+      if (i < marks.length - 1) d.Next = refs[i + 1];
+      ctx.assign(refs[i], ctx.obj(d));
+    });
+    ctx.assign(root, ctx.obj({ Type: 'Outlines', First: refs[0], Last: refs[refs.length - 1], Count: marks.length }));
+    out.catalog.set(L.PDFName.of('Outlines'), root);
+    out.catalog.set(L.PDFName.of('PageMode'), L.PDFName.of('UseOutlines'));
   }
   return out.save({ useObjectStreams: true });
 }
@@ -289,7 +324,7 @@ async function restoreBackup(file, parentFolder) {
   }
   for (const b of H.blobs) if (!await Store.hasBlob(b.key)) await Store.putBlob(b.key, { type: b.type, name: b.name, data: bin(b) });
   const pagesById = new Map(H.pages.map((p) => [p.id, p]));
-  const textsByPage = new Map(H.texts.map((t) => [t.pageId, t.text]));
+  const textsByPage = new Map(H.texts.filter((t) => t.text).map((t) => [t.pageId, t.text]));
   let notes = 0;
   for (const it of H.items) {
     const copy = { ...it, id: nid(it.id, it.type === 'folder' ? 'f' : 'n'), parent: inSet.has(it.parent) ? nid(it.parent, 'f') : parent, trashed: false };
@@ -303,7 +338,7 @@ async function restoreBackup(file, parentFolder) {
       pages.push(q);
     }
     copy.pageIds = pages.map((p) => p.id);
-    await Store.saveNote(copy, pages.map(pageRecord), [], pages.filter((p) => p.text).map((p) => ({ pageId: p.id, noteId: copy.id, text: p.text })));
+    await Store.saveNote(copy, pages.map(pageRecord), [], textRecs(pages, copy.id));
     notes++;
   }
   return { notes, kind: H.kind, folder: H.kind === 'library' ? parent : null };

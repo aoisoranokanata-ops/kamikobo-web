@@ -360,10 +360,10 @@ const ImageCache = {
 };
 
 /* ページの座標の g に画像を描く（hide = 描かない id） */
-function drawImages(g, p, hide) {
+function drawImages(g, p, hide, opt) {
   for (const im of p.images || []) {
     if (hide && hide.has(im.id)) continue;
-    drawImageItem(g, im);
+    drawObject(g, im, opt);
   }
 }
 function drawImageItem(g, im) {
@@ -398,5 +398,7 @@ function imageTransformed(im, m, keepId = true) {
   const nx = m.a * cx + m.c * cy + m.e, ny = m.b * cx + m.d * cy + m.f;
   const k = Math.sqrt(Math.abs(m.a * m.d - m.b * m.c)) || 1;
   const w = im.w * k, h = im.h * k;
-  return { ...imageRecord(im), id: keepId ? im.id : uid('m'), x: nx - w / 2, y: ny - h / 2, w, h, rot: (im.rot || 0) + Math.atan2(m.b, m.a) };
+  const out = { ...imageRecord(im), id: keepId ? im.id : uid('m'), x: nx - w / 2, y: ny - h / 2, w, h, rot: (im.rot || 0) + Math.atan2(m.b, m.a) };
+  if (im.size) out.size = im.size * k;          // 文字は大きさも
+  return out;
 }

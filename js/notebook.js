@@ -186,7 +186,7 @@ class Note {
   async save() {
     const dirtyPages = this.pages.filter((p) => this.dirty.has(p.id));
     const pages = dirtyPages.map(pageRecord);
-    const texts = dirtyPages.filter((p) => p.text !== undefined).map((p) => ({ pageId: p.id, noteId: this.item.id, text: p.text || '' }));
+    const texts = textRecs(dirtyPages, this.item.id, true);
     if (!pages.length && !this.itemDirty && !this.removed.length) return false;
     const live = new Set(this.pages.map((p) => p.id));
     const gone = [...new Set(this.removed.concat(this._known ? [...this._known].filter((id) => !live.has(id)) : []))];
@@ -218,6 +218,16 @@ function blankPage(item, id, like = null) {
   };
 }
 
+/* 検索用の文字の記録（PDF の文字と、置いた文字）。all = 空のページも（保存先の古い記録を消すため） */
+function textRecs(pages, noteId, all = false) {
+  const out = [];
+  for (const p of pages) {
+    const r = { pageId: p.id, noteId, text: p.text || '', obj: objectsText(p) };
+    if (all || r.text || r.obj) out.push(r);
+  }
+  return out;
+}
+
 /* ページの写し（線・画像・PDF の下地・文字ごと。id は新しく） */
 function copyPage(p, noteId) {
   const q = { ...pageRecord(p), id: uid('p'), noteId };
@@ -247,7 +257,6 @@ async function createNoteFromPages({ name, parent, pages, paper, size, thumb }) 
   for (const p of pages) { p.noteId = item.id; p.strokes = p.strokes || []; p.images = p.images || []; }
   item.pageIds = pages.map((p) => p.id);
   if (thumb) item.thumb = thumb;
-  const texts = pages.filter((p) => p.text).map((p) => ({ pageId: p.id, noteId: item.id, text: p.text }));
-  await Store.saveNote(item, pages.map(pageRecord), [], texts);
+  await Store.saveNote(item, pages.map(pageRecord), [], textRecs(pages, item.id));
   return item;
 }

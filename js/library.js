@@ -40,7 +40,8 @@ class Library {
     if (q !== this.query) return;
     const nq = normText(q).trim();
     const byNote = new Map();
-    for (const r of this.texts) {
+    for (const r0 of this.texts) {
+      const r = { ...r0, text: [r0.text || '', r0.obj || ''].filter(Boolean).join('\n') };
       if (!r.text || !normText(r.text).includes(nq)) continue;
       const it = this.byId(r.noteId);
       if (!it || it.trashed || this.path(it.parent).some((f) => f.trashed)) continue;
@@ -228,7 +229,7 @@ class Library {
     const copy = { ...it, id: uid('n'), name: it.name + ' のコピー', created: now, updated: now };
     const newPages = src.pages.map((p) => copyPage(p, copy.id));
     copy.pageIds = newPages.map((p) => p.id);
-    await Store.saveNote(copy, newPages.map(pageRecord), [], newPages.filter((p) => p.text).map((p) => ({ pageId: p.id, noteId: copy.id, text: p.text })));
+    await Store.saveNote(copy, newPages.map(pageRecord), [], textRecs(newPages, copy.id));
     await this.refresh();
     toast('複製しました');
   }

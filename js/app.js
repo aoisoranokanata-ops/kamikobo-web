@@ -7,12 +7,14 @@ const DEFAULT_SETTINGS = {
   twoFinger: 'eraser',        // 2 本指タップ: 'eraser'（消しゴムに切り替え）| 'undo'
   rotateGesture: false,       // 2 本指で画面も回す
   fitPage: false,             // 画面に合わせる: ページ全体（false なら幅）
+  shapeHold: true,            // 書いて止めると図形に整える
 };
 
 const DEFAULT_TOOLS = {
   pen: { pen: 'ball', color: '#1d1d1f', w: 1.0, colors: ['#1d1d1f', '#1f4fd1', '#d12b2b', '#1f8a3c', '#8a3cc2'], widths: [0.6, 1.0, 1.8] },
   hl: { color: '#ffe14d', w: 12, op: 0.4, straight: false, colors: ['#ffe14d', '#9be36b', '#7fd3ff', '#ff9ec7', '#ffb347'], widths: [8, 12, 18] },
   eraser: { mode: 'partial', size: 24, sizes: [12, 24, 48] },
+  text: { size: 16, color: '#1d1d1f', font: 'gothic', bold: false, colors: ['#1d1d1f', '#1f4fd1', '#d12b2b', '#1f8a3c', '#8a3cc2'], sizes: [10, 14, 18, 24, 36] },
 };
 
 class App {
@@ -23,10 +25,12 @@ class App {
     for (const k of Object.keys(DEFAULT_TOOLS)) this.toolState[k] = { ...DEFAULT_TOOLS[k], ...(ts[k] || {}) };
     this.note = null;
     this.clipboard = null;
-    this.tools = { pen: new PenTool(this, 'pen'), hl: new PenTool(this, 'hl'), eraser: new EraserTool(this), lasso: new LassoTool(this), hand: null };
+    this.tools = { pen: new PenTool(this, 'pen'), hl: new PenTool(this, 'hl'), eraser: new EraserTool(this), lasso: new LassoTool(this), hand: null,
+      text: new TextTool(this), laser: new LaserTool(this) };
     this.toolName = 'pen';
     this.prevTool = 'pen';
     this.view = new NoteView(this, $('#base'), $('#over'));
+    this.zoomWin = new ZoomWindow(this);
     this.library = new Library(this);
     this.saveSoon = debounce(() => this.saveNote(), 700);
     this.saveViewSoon = debounce(() => this.saveView(), 600);
@@ -79,6 +83,9 @@ class App {
   }
   async closeNote() {
     if (!this.note) return;
+    this.tools.text.commit(this.view);
+    if (this.zoomWin.open) this.zoomWin.toggle(false);
+    this.view.ruler.visible = false;
     this.tools.lasso.clear(this.view);
     await this.saveNote(true, true);
     this.note = null;
@@ -126,16 +133,21 @@ class App {
     $('#btn-redo').disabled = !n.redoStack.length;
     if (!n.board) $('#page-ind').textContent = `${this.view.currentPageIndex() + 1} / ${n.pages.length}`;
     else $('#page-ind').textContent = '∞';
+    const cp = n.board ? null : n.pages[this.view.currentPageIndex()];
+    const mb = $('#btn-mark');
+    mb.hidden = n.board;
+    mb.classList.toggle('on', !!(cp && cp.mark));
   }
 
   // ================= 道具
   setTool(name) {
     if (name !== 'lasso' && this.tools.lasso.sel) this.tools.lasso.clear(this.view);
+    if (name !== 'text' && this.tools.text.edit) this.tools.text.commit(this.view);
     if (name !== this.toolName && this.toolName !== 'eraser') this.prevTool = this.toolName;
     this.toolName = name;
     for (const b of $$('#tools [data-tool]')) b.classList.toggle('on', b.dataset.tool === name);
     this.renderQuick();
-    this.view.over.style.cursor = name === 'hand' ? 'grab' : 'crosshair';
+    this.view.over.style.cursor = name === 'hand' ? 'grab' : name === 'text' ? 'text' : 'crosshair';
     this.view.requestOver();
   }
   twoFingerTap() {
@@ -190,10 +202,16 @@ class App {
       if (k === 'pen') {
         box.append(el('span', { class: 'qsep' }));
         box.append(el('button', { class: 'chip', onclick: (e) => this.penKindMenu(e.currentTarget) }, PEN_KINDS[o.pen].label + ' ▾'));
+        box.append(el('button', { class: 'chip' + (this.settings.shapeHold ? ' on' : ''), title: '書いたままペンを止めると、直線・円・四角などに整えます',
+          onclick: () => { this.settings.shapeHold = !this.settings.shapeHold; this.saveSettings(); this.renderQuick(); } }, '図形補正'));
       } else {
         box.append(el('span', { class: 'qsep' }));
         box.append(el('button', { class: 'chip' + (o.straight ? ' on' : ''), onclick: () => { o.straight = !o.straight; this.saveTools(); this.renderQuick(); } }, '直線'));
       }
+      box.append(el('button', { class: 'chip' + (this.view.ruler.visible ? ' on' : ''), title: '定規（縁の近くで書くと真っすぐ。2本指で回す）',
+        onclick: () => { this.view.ruler.show(); this.renderQuick(); } }, '📏 定規'));
+      if (!this.note || !this.note.board) box.append(el('button', { class: 'chip' + (this.zoomWin.open ? ' on' : ''), title: '拡大窓（下に大きく映して書く）',
+        onclick: () => this.zoomWin.toggle() }, '🔎 拡大窓'));
     } else if (k === 'eraser') {
       const o = this.toolState.eraser;
       for (const [m, label] of [['partial', '部分消し'], ['stroke', '線ごと']]) {
@@ -204,8 +222,33 @@ class App {
         box.append(el('button', { class: 'width' + (sz === o.size ? ' on' : ''), onclick: () => { o.size = sz; this.saveTools(); this.renderQuick(); } },
           el('i', { style: { width: sz / 3 + 4 + 'px', height: sz / 3 + 4 + 'px', background: 'transparent', border: '1.5px solid #ddd' } })));
       }
+    } else if (k === 'text') {
+      const o = this.toolState.text, T = this.tools.text;
+      const cur = T.edit ? T.edit.obj : o;
+      const set = (patch) => {
+        if (!T.restyle(this.view, patch)) { Object.assign(o, patch); this.saveTools(); }
+        else Object.assign(o, Object.fromEntries(Object.entries(patch).filter(([key]) => key !== 'bg')));
+        this.saveTools(); this.renderQuick();
+        if (T.edit) setTimeout(() => $('#text-editor').focus(), 0);
+      };
+      o.colors.forEach((c) => box.append(el('button', { class: 'swatch' + (c.toLowerCase() === (cur.color || '').toLowerCase() ? ' on' : ''), style: { '--c': c },
+        onclick: () => set({ color: c }) })));
+      box.append(el('span', { class: 'qsep' }));
+      for (const sz of o.sizes) box.append(el('button', { class: 'chip' + (Math.abs(sz - cur.size) < 0.01 ? ' on' : ''), onclick: () => set({ size: sz }) }, String(sz)));
+      box.append(el('span', { class: 'qsep' }));
+      box.append(el('button', { class: 'chip', onclick: (e) => popMenu(e.currentTarget, Object.entries(FONT_FAMILIES).map(([key, f]) =>
+        ({ label: (cur.font === key ? '✓ ' : '　 ') + f.label, fn: () => set({ font: key }) }))) }, (FONT_FAMILIES[cur.font] || FONT_FAMILIES.gothic).label + ' ▾'));
+      box.append(el('button', { class: 'chip' + (cur.bold ? ' on' : ''), style: { fontWeight: '700' }, onclick: () => set({ bold: !cur.bold }) }, 'B'));
+      if (T.edit) {
+        box.append(el('span', { class: 'qsep' }));
+        box.append(el('button', { class: 'chip' + (!T.edit.obj.bg ? ' on' : ''), onclick: () => set({ bg: null }) }, '地なし'));
+        for (const c of STICKY_COLORS) box.append(el('button', { class: 'swatch sq' + (T.edit.obj.bg === c ? ' on' : ''), style: { '--c': c }, title: '付箋の色', onclick: () => set({ bg: c }) }));
+        box.append(el('button', { class: 'chip', onclick: () => T.commit(this.view) }, '完了'));
+      } else box.append(el('span', { class: 'qhint' }, 'タップで文字を置く（横にドラッグで幅を決める）・文字をタップで直す'));
+    } else if (k === 'laser') {
+      box.append(el('span', { class: 'qhint' }, 'レーザーポインター: 書いた跡はすぐ消えます（ノートには残りません）'));
     } else if (k === 'lasso') {
-      box.append(el('span', { class: 'qhint' }, '囲んで選ぶ → 中をドラッグで移動・□で拡大縮小・○で回転'));
+      box.append(el('span', { class: 'qhint' }, '囲んで選ぶ（画像・文字・スタンプはタップでも）→ 中をドラッグで移動・□で拡大縮小・○で回転'));
       if (this.clipboard) box.append(el('button', { class: 'chip', onclick: () => this.paste() }, '貼り付け'));
     } else if (k === 'hand') {
       box.append(el('span', { class: 'qhint' }, 'ドラッグで移動・2本指でつまんで拡大縮小'));
@@ -271,6 +314,7 @@ class App {
       { label: '書いたもの全体を表示', fn: () => this.view.fitContent() },
       { label: '中心に戻す', fn: () => { n.item.view = null; this.view.fit(); } },
     ] : [
+      { label: p.mark ? '🔖 しおりを外す' : '🔖 しおりを付ける', fn: () => this.toggleMark(p) },
       { label: '↻ このページを右に回転', fn: () => { n.rotatePage(p, 90); this.afterPageChange(); } },
       { label: '↺ このページを左に回転', fn: () => { n.rotatePage(p, -90); this.afterPageChange(); } },
       null,
@@ -316,12 +360,15 @@ class App {
         if (p) this.thumbAsync(p, 160).then((u) => { e.target.src = u; });
       }
     }, { root: list, rootMargin: '300px' });
+    $('#pp-marks').classList.toggle('on', !!this.panelMarks);
     n.pages.forEach((p, i) => {
+      if (this.panelMarks && !p.mark) return;
       const img = el('img', { alt: '', 'data-pid': p.id });
       this._ppObs.observe(img);
       const chk = sel ? el('span', { class: 'pp-check' + (sel.has(p.id) ? ' on' : '') }, sel.has(p.id) ? '✓' : '') : null;
       const row = el('div', { class: 'pp-item' + (i === cur && !sel ? ' on' : '') + (sel && sel.has(p.id) ? ' picked' : '') }, img,
-        el('div', { class: 'pp-no' }, String(i + 1)), chk,
+        el('div', { class: 'pp-no' }, String(i + 1), p.mark ? el('span', { class: 'pp-mark', title: 'しおりの名前を変える',
+          onclick: (e) => { e.stopPropagation(); this.renameMark(p); } }, ' 🔖 ' + (p.mark.title || '')) : null), chk,
         sel ? null : el('div', { class: 'pp-actions' },
           el('button', { title: '上へ', disabled: i === 0, onclick: (e) => { e.stopPropagation(); n.movePage(p, i - 1); this.afterPageChange(); } }, '▲'),
           el('button', { title: '下へ', disabled: i === n.pages.length - 1, onclick: (e) => { e.stopPropagation(); n.movePage(p, i + 1); this.afterPageChange(); } }, '▼'),
@@ -378,7 +425,11 @@ class App {
   // ================= 挿入（画像・PDF・ほかのノート）
   insertMenu(anchor) {
     const n = this.note;
-    const items = [{ label: '🖼 画像（写真・ファイル）', fn: () => this.insertImagesPick() }];
+    const items = [
+      { label: '🖼 画像（写真・ファイル）', fn: () => this.insertImagesPick() },
+      { label: '🗒 付箋', fn: () => this.addSticky() },
+      { label: '🔖 スタンプ…', fn: () => setTimeout(() => this.stampMenu(anchor), 0) },
+    ];
     if (!n.board) {
       items.push({ label: '📄 PDF を後ろに挿入', fn: () => this.insertPdfPick() });
       items.push({ label: '📓 ほかのノートを後ろに挿入', fn: () => this.insertNotePick() });
@@ -521,17 +572,19 @@ class App {
     this.searchMarks = null;
     this.view.requestOver();
     if (!n) return;
-    const withText = n.pages.filter((p) => p.text);
+    const full = (p) => [p.text || '', objectsText(p)].filter(Boolean).join('\n');
+    const withText = n.pages.filter((p) => full(p));
     if (!q) {
       list.append(el('div', { class: 'sp-hint muted' }, withText.length ? `文字のあるページ: ${withText.length} / ${n.pages.length}` :
-        'このノートには検索できる文字がありません（読み込んだ PDF の文字を探せます。手書きの文字はフェーズ6で AI に読ませて探せるようにします）'));
+        'このノートには検索できる文字がありません（読み込んだ PDF の文字と、文字の道具・付箋・スタンプの文字を探せます。手書きの文字はフェーズ6で AI に読ませて探せるようにします）'));
       return;
     }
     let count = 0;
     const hits = [];
     n.pages.forEach((p, i) => {
-      if (!p.text) return;
-      const sn = snippetOf(p.text, q);
+      const txt = full(p);
+      if (!txt) return;
+      const sn = snippetOf(txt, q);
       if (!sn) return;
       hits.push(i);
       count++;
@@ -549,7 +602,8 @@ class App {
     this.view.goToPage(i);
     this.updateStatus();
     try {
-      const polys = await PdfText.findPolys(p, q);
+      const polys = (await PdfText.findPolys(p, q)).concat((p.images || []).filter((o) => (o.kind === 'text' || o.kind === 'stamp') &&
+        normText(o.kind === 'text' ? o.text : stampText(o)).includes(normText(q).trim())).map((o) => imageCorners(o).flat()));
       this.searchMarks = new Map([[p.id, polys]]);
       // 当たった所が見えるように
       if (polys.length) {
@@ -758,7 +812,105 @@ class App {
     this._badgeT = setTimeout(() => b.classList.remove('show'), 900);
   }
   closePopups() { closePopMenus(); }
-  onTapEmpty() { if (this.tools.lasso.sel) this.tools.lasso.clear(this.view); }
+  onTap(P, type) {
+    const n = this.note;
+    if (!n) return;
+    const hit = n.pageAt(P.x, P.y, 0);
+    if (hit.inside) {
+      const q = n.docToPage(hit.page, P.x, P.y);
+      const link = (hit.page.images || []).slice().reverse().find((o) => o.kind === 'link' && imageHit(o, q.x, q.y));
+      if (link) { this.followLink(link); return; }
+      if (this.zoomWin.open && !n.board && this.zoomWin.moveTo(hit.page, q)) return;
+    }
+    if (this.tools.lasso.sel) this.tools.lasso.clear(this.view);
+  }
+  async followLink(link) {
+    const n = this.note, to = link.to || {};
+    if (to.page) {
+      const i = n.pages.findIndex((p) => p.id === to.page);
+      if (i < 0) { toast('リンク先のページがありません（消されたかもしれません）', { error: true }); return; }
+      this.view.goToPage(i); this.updateStatus(); this.showBadge(`${i + 1} ページへ`);
+    } else if (to.url) {
+      if (await confirmBox('リンクを開く', to.url, '開く')) window.open(to.url, '_blank', 'noopener');
+    }
+  }
+  /* なげなわで選んだ所をリンクにする（ページへ／URL へ） */
+  async linkDialog() {
+    const L = this.tools.lasso, n = this.note;
+    if (!L.sel) return;
+    const b = L.selectionRect(), page = L.sel.page;
+    const sel = el('select', {}, el('option', { value: '' }, '— ページを選ぶ —'),
+      ...n.pages.map((p, i) => el('option', { value: p.id }, `${i + 1} ページ${p.mark ? '（' + (p.mark.title || 'しおり') + '）' : ''}`)));
+    const url = el('input', { type: 'text', placeholder: 'https://…', class: 'wide' });
+    const v = await modal('リンクを付ける', el('div', { class: 'settings' }, el('label', { class: 'field' }, 'このノートのページへ', sel), el('label', { class: 'field' }, 'または Web のアドレス', url),
+      el('p', { class: 'muted small' }, '指（または手のひら）でタップするとリンク先へ移ります。PDF に書き出してもリンクになります。')),
+    [{ label: 'キャンセル', value: null }, { label: '付ける', primary: true, value: 'ok', check: () => !!(sel.value || /^https?:\/\/\S+/.test(url.value.trim())) }]);
+    if (v !== 'ok') return;
+    const to = sel.value ? { page: sel.value } : { url: url.value.trim() };
+    const pad = 3;
+    const o = { id: uid('m'), kind: 'link', x: b[0] - pad, y: b[1] - pad, w: b[2] - b[0] + pad * 2, h: b[3] - b[1] + pad * 2, rot: 0, to };
+    const ib = (page.images || []).slice();
+    n.swapBoth(page, page.strokes.slice(), page.strokes.slice(), ib, ib.concat([o]), 'リンク');
+    L.clear(this.view);
+    toast('リンクを付けました（指でタップすると移動します）');
+  }
+
+  // ================= しおり
+  toggleMark(p = this.currentPage()) {
+    const n = this.note;
+    if (!n || !p || n.board) return;
+    const before = p.mark || null, after = before ? null : { title: `${n.pageIndex(p) + 1} ページ` };
+    const apply = (m) => { if (m) p.mark = m; else delete p.mark; n.dirty.add(p.id); n.touch(null); this.updateStatus(); this.refreshPanel(); };
+    n.push({ label: 'しおり', redo: () => apply(after), undo: () => apply(before) });
+    this.showBadge(after ? 'しおりを付けました' : 'しおりを外しました');
+  }
+  async renameMark(p) {
+    const name = await askText('しおりの名前', p.mark.title || '');
+    if (!name) return;
+    const n = this.note, before = p.mark, after = { ...p.mark, title: name };
+    const apply = (m) => { p.mark = m; n.dirty.add(p.id); n.touch(null); this.refreshPanel(); };
+    n.push({ label: 'しおりの名前', redo: () => apply(after), undo: () => apply(before) });
+  }
+
+  // ================= スタンプ・付箋
+  stampMenu(anchor) {
+    const grid = el('div', { class: 'stamp-grid' });
+    const done = (st) => { closePopMenus(); this.placeObject((x, y) => newStamp(st, x, y)); };
+    for (const st of STAMPS) {
+      const o = newStamp(st, 0, 0), c = el('canvas', { width: Math.ceil(o.w * 2), height: Math.ceil(o.h * 2) });
+      c.style.width = o.w + 'px'; c.style.height = o.h + 'px';
+      const g = c.getContext('2d'); g.scale(2, 2); drawObject(g, { ...o, x: 0, y: 0 });
+      grid.append(el('button', { class: 'stamp-cell', onclick: () => done(st) }, c));
+    }
+    const m = popMenu(anchor, []);
+    m.append(grid);
+    const r = m.getBoundingClientRect();          // 中身を入れた後で画面からはみ出さないように
+    if (r.right > innerWidth - 8) m.style.left = Math.max(8, innerWidth - 8 - r.width) + 'px';
+    if (r.bottom > innerHeight - 8) m.style.top = Math.max(8, innerHeight - 8 - r.height) + 'px';
+  }
+  /* 見ている所の真ん中に物を置いて、なげなわで選ぶ */
+  placeObject(make) {
+    const n = this.note, v = this.view;
+    const C = v.toDocLocal(v.cssW / 2, v.cssH / 2), hit = n.pageAt(C.x, C.y, 1e9), page = hit.page, q = n.docToPage(page, C.x, C.y);
+    const o = make(q.x, q.y);
+    if (!page.infinite) { o.x = clamp(o.x, 0, Math.max(0, page.w - o.w)); o.y = clamp(o.y, 0, Math.max(0, page.h - o.h)); }
+    const ib = (page.images || []).slice();
+    n.swapBoth(page, page.strokes.slice(), page.strokes.slice(), ib, ib.concat([o]), '置く');
+    this.setTool('lasso');
+    this.tools.lasso.setSel(page, [], [o]);
+    v.invalidate();
+    this.tools.lasso.showBar(v);
+    return { page, o };
+  }
+  addSticky() {
+    const n = this.note, v = this.view;
+    const C = v.toDocLocal(v.cssW / 2, v.cssH / 2), hit = n.pageAt(C.x, C.y, 1e9), page = hit.page, q = n.docToPage(page, C.x, C.y);
+    const o = this.toolState.text;
+    const obj = fitTextHeight({ id: uid('m'), kind: 'text', x: q.x - 90, y: q.y - 60, w: 180, h: 120, rot: 0, text: '', size: 14, color: '#1d1d1f', font: o.font, bold: false, bg: STICKY_COLORS[0] });
+    if (!page.infinite) { obj.x = clamp(obj.x, 0, Math.max(0, page.w - obj.w)); obj.y = clamp(obj.y, 0, Math.max(0, page.h - obj.h)); }
+    this.setTool('text');
+    this.tools.text.open(v, page, obj, true);
+  }
 
   bindEditor() {
     $('#btn-back').addEventListener('click', () => this.closeNote());
@@ -795,6 +947,9 @@ class App {
     $('#sel-copy').addEventListener('click', () => { L().copy(); this.renderQuick(); });
     $('#sel-cut').addEventListener('click', () => { L().cut(V()); this.renderQuick(); });
     $('#sel-dup').addEventListener('click', () => L().duplicate(V()));
+    $('#sel-link').addEventListener('click', () => this.linkDialog());
+    $('#btn-mark').addEventListener('click', () => this.toggleMark());
+    $('#pp-marks').addEventListener('click', () => { this.panelMarks = !this.panelMarks; this.refreshPanel(); });
     $('#sel-color').addEventListener('click', () => {
       const cur = L().sel && L().sel.strokes[0] ? L().sel.strokes[0].color : '#000000';
       this.pickColor(cur, (c) => L().recolor(V(), c));
@@ -814,7 +969,9 @@ class App {
       if (mod && k === 'f') { e.preventDefault(); this.openSearch(); return; }
       if ((k === 'delete' || k === 'backspace') && this.tools.lasso.sel) { e.preventDefault(); this.tools.lasso.remove(this.view); return; }
       if (mod) return;
-      const map = { p: 'pen', h: 'hl', e: 'eraser', l: 'lasso', ' ': 'hand' };
+      const map = { p: 'pen', h: 'hl', e: 'eraser', l: 'lasso', ' ': 'hand', t: 'text', k: 'laser' };
+      if (k === 'r') { e.preventDefault(); this.view.ruler.show(); this.renderQuick(); return; }
+      if (k === 'b') { e.preventDefault(); this.toggleMark(); return; }
       if (map[k]) { e.preventDefault(); this.setTool(map[k]); }
     });
   }

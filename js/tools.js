@@ -13,11 +13,19 @@ class PenTool {
     if (!hit.inside) { this.cur = null; return; }
     const o = this.opt;
     const s = this.kind === 'hl' ? newStroke('hl', 'ball', o.color, o.w, o.op) : newStroke('pen', o.pen, o.color, o.w, 1);
-    this.cur = { page: hit.page, s, t0: p.t, start: null };
+    this.cur = { page: hit.page, s, t0: p.t, start: null, shaped: false, v };
+    // 定規の縁の近くで書き始めたら、縁にそって真っすぐ
+    const R = v.ruler;
+    if (R && R.visible) { const sp = v.toScreen(p.X, p.Y), side = R.snapSide(sp.x, sp.y); if (side) this.cur.snap = side; }
     this.add(p, v);
   }
   add(p, v) {
     const c = this.cur;
+    if (c.shaped) return;                 // 図形に整えた後は動かしても変えない
+    if (c.snap) {
+      const sp = v.toScreen(p.X, p.Y), pr = v.ruler.project(sp.x, sp.y, c.snap, (c.s.w * v.s) / 2), P = v.toDocLocal(pr.x, pr.y);
+      p = { ...p, X: P.x, Y: P.y };
+    }
     const q = v.note.docToPage(c.page, p.X, p.Y);
     const pts = c.s.pts, n = pts.length;
     if (n >= 4) {
@@ -29,9 +37,33 @@ class PenTool {
       c.s._cap = null;
     }
     strokeAppend(c.s, q.x, q.y, p.pressure, p.t - c.t0);
+    // 少しの手ぶれでは「止まった」ままとみなす（3px 以上動いたら数え直し）
+    if (!c.holdAt || Math.hypot(q.x - c.holdAt.x, q.y - c.holdAt.y) * v.s > 3) { c.holdAt = q; this.armHold(v); }
+  }
+  /* 書いたまま止めると図形に整える */
+  armHold(v) {
+    clearTimeout(this._hold);
+    const c = this.cur;
+    if (!c || c.snap || this.kind === 'hl' && this.opt.straight || !this.app.settings.shapeHold) return;
+    this._hold = setTimeout(() => {
+      if (this.cur !== c || c.shaped) return;
+      const r = recognizeShape(c.s.pts);
+      if (!r) return;
+      const pts = c.s.pts, n = pts.length / 4;
+      let pr = 0;
+      for (let i = 0; i < n; i++) pr += pts[i * 4 + 2];
+      pr = n ? pr / n : 0.5;
+      const out = new Float32Array(r.pts.length * 4);
+      r.pts.forEach(([x, y], i) => { out[i * 4] = x; out[i * 4 + 1] = y; out[i * 4 + 2] = pr; out[i * 4 + 3] = i * 4; });
+      c.s.pts = out; c.s._cap = null; invalidate(c.s);
+      c.shaped = true;
+      this.app.showBadge(r.name + 'に整えました');
+      v.requestOver();
+    }, 520);
   }
   move(p, v) { if (this.cur) this.add(p, v); }
   up(p, v) {
+    clearTimeout(this._hold);
     const c = this.cur;
     this.cur = null;
     if (!c) return;
@@ -40,13 +72,13 @@ class PenTool {
     v.note.strokesCmd(c.page, [], [c.s], this.kind === 'hl' ? '蛍光ペン' : 'ペン');
     v.invalidate();
   }
-  cancel(v) { this.cur = null; v.invalidate(); }
+  cancel(v) { clearTimeout(this._hold); this.cur = null; v.invalidate(); }
   drawOverlay(g, v) {
     const c = this.cur;
-    if (!c) return;
+    if (!c || c.v !== v) return;
     v.withPage(g, c.page, (gg) => {
       drawStroke(gg, c.s, { noMultiply: true });
-      if (v.predicted && v.predicted.length && c.s.pts.length >= 4 && this.kind !== 'hl') {   // 先読み（画面だけ）
+      if (v.predicted && v.predicted.length && c.s.pts.length >= 4 && this.kind !== 'hl' && !c.shaped && !c.snap) {   // 先読み（画面だけ）
         const pts = c.s.pts, n = pts.length;
         gg.beginPath();
         gg.moveTo(pts[n - 4], pts[n - 3]);
@@ -264,7 +296,7 @@ class LassoTool {
       Math.max(...c.map((q) => q.y)), parts.join('・'));
   }
   drawSelected(gg) {
-    for (const im of this.sel.images) drawImageItem(gg, im);
+    for (const im of this.sel.images) drawObject(gg, im, { screen: true });
     drawStrokes(gg, this.sel.strokes, null, { noMultiply: true });
   }
   drawOverlay(g, v) {

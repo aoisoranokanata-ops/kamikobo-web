@@ -45,9 +45,12 @@
       <button data-tool="hl" title="蛍光ペン（H）">🖍</button>
       <button data-tool="eraser" title="消しゴム（E）">◻︎</button>
       <button data-tool="lasso" title="なげなわ（L）">➰</button>
+      <button data-tool="text" title="文字（T）" class="t-text">T</button>
+      <button data-tool="laser" title="レーザーポインター（K）">🔴</button>
       <button data-tool="hand" title="手のひら（スペース）">✋</button>
     </div>
     <div class="tb-right">
+      <button id="btn-mark" class="ghost" title="このページにしおり（B）">🔖</button>
       <button id="btn-search" class="ghost" title="ノートの中を検索（⌘F）">🔍</button>
       <button id="btn-insert" class="ghost" title="画像・PDF を挿入">🖼</button>
       <button id="btn-share" class="ghost" title="PDF に書き出す・共有">⤴</button>
@@ -62,17 +65,32 @@
   <div id="stage">
     <canvas id="base"></canvas>
     <canvas id="over"></canvas>
+    <textarea id="text-editor" hidden spellcheck="false" autocapitalize="off" placeholder="文字を入力"></textarea>
+  </div>
+  <div id="zoomwin" class="zoomwin" hidden>
+    <canvas id="zw-canvas"></canvas>
+    <div class="zw-bar">
+      <button id="zw-left" class="ghost" title="枠を左へ">←</button>
+      <button id="zw-right" class="ghost" title="枠を右へ">→</button>
+      <button id="zw-newline" class="ghost" title="次の行の左へ">↵</button>
+      <span class="zw-sep"></span>
+      <button id="zw-bigger" class="ghost" title="もっと大きく">＋</button>
+      <button id="zw-smaller" class="ghost" title="小さく">－</button>
+      <span class="zw-sep"></span>
+      <button id="zw-close" class="ghost" title="拡大窓を閉じる">✕</button>
+    </div>
   </div>
   <div id="selbar" class="selbar" hidden>
     <span id="sel-count" class="muted"></span>
     <button id="sel-color">色</button>
     <button id="sel-dup">複製</button>
+    <button id="sel-link" title="ページや Web へのリンクにする">🔗</button>
     <button id="sel-copy">コピー</button>
     <button id="sel-cut">切り取り</button>
     <button id="sel-del" class="danger">削除</button>
   </div>
   <aside id="pagepanel" class="pagepanel" hidden>
-    <div class="pp-head"><span>ページ</span><button id="pp-select" class="small">選ぶ</button><button id="pp-add" class="small">＋ 最後に追加</button><button id="pp-close" class="ghost">✕</button></div>
+    <div class="pp-head"><span>ページ</span><button id="pp-marks" class="small" title="しおりのページだけ">🔖</button><button id="pp-select" class="small">選ぶ</button><button id="pp-add" class="small">＋ 最後に追加</button><button id="pp-close" class="ghost">✕</button></div>
     <div id="pp-selbar" class="pp-selbar" hidden>
       <span id="pp-selcount" class="muted"></span>
       <button data-act="pdf" class="small">PDF</button>
@@ -97,7 +115,11 @@
 <script src="js/ink.js"></script>
 <script src="js/notebook.js"></script>
 <script src="js/view.js"></script>
+<script src="js/shapes.js"></script>
 <script src="js/tools.js"></script>
+<script src="js/objects.js"></script>
+<script src="js/ruler.js"></script>
+<script src="js/zoomwin.js"></script>
 <script src="js/pdfdoc.js"></script>
 <script src="js/exporter.js"></script>
 <script src="js/library.js"></script>
