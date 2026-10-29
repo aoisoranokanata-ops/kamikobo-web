@@ -50,6 +50,7 @@
       <button data-tool="hand" title="手のひら（スペース）">✋</button>
     </div>
     <div class="tb-right">
+      <button id="btn-ai" class="ghost" title="AI（Claude）: 要約・質問・手書きを文字に・暗記カード">✨</button>
       <button id="btn-rec" class="ghost" title="録音（書いた線と音声が同期します）">🎙</button>
       <button id="btn-mark" class="ghost" title="このページにしおり（B）">🔖</button>
       <button id="btn-search" class="ghost" title="ノートの中を検索（⌘F）">🔍</button>
@@ -101,6 +102,11 @@
     </div>
     <div id="pp-list" class="pp-list"></div>
   </aside>
+  <aside id="aipanel" class="pagepanel aipanel" hidden>
+    <div class="pp-head"><span id="ai-title">AI</span><button id="ai-close" class="ghost">✕</button></div>
+    <div id="ai-body" class="ai-body"></div>
+    <div id="ai-foot" class="ai-foot"></div>
+  </aside>
   <aside id="recpanel" class="pagepanel searchpanel" hidden>
     <div class="pp-head"><span>録音</span><button id="rp-new" class="small">● 録音する</button><button id="rp-close" class="ghost">✕</button></div>
     <div id="rp-list" class="sp-list"></div>
@@ -145,6 +151,7 @@
 <script src="js/zoomwin.js"></script>
 <script src="js/templates.js"></script>
 <script src="js/recorder.js"></script>
+<script src="js/ai.js"></script>
 <script src="js/pdfdoc.js"></script>
 <script src="js/exporter.js"></script>
 <script src="js/library.js"></script>

@@ -69,7 +69,7 @@ const Store = {
       si.put(item);
       for (const p of pages) sp.put(p);
       for (const id of removedPageIds) { sp.delete(id); st.delete(id); }
-      for (const r of texts) { if (r.text || r.obj) st.put(r); else st.delete(r.pageId); }
+      for (const r of texts) { if (r.text || r.obj || r.hw) st.put(r); else st.delete(r.pageId); }
     });
   },
   async getTexts(noteId) { return this.tx(['texts'], 'readonly', (s) => this.req(s.index('noteId').getAll(noteId))); },
@@ -129,6 +129,7 @@ function pageRecord(pg) {
     strokes: pg.strokes.map(strokeRecord) };
   if (pg.bg) r.bg = { src: pg.bg.src, page: pg.bg.page, vt: pg.bg.vt, ...(pg.bg.tpl ? { tpl: true } : {}) };
   if (pg.mark) r.mark = { ...pg.mark };
+  if (pg.hw) r.hw = pg.hw;               // AI で読み取った手書きの文字（行ごとの位置つき）
   if (pg.images && pg.images.length) r.images = pg.images.map(imageRecord);
   return r;
 }

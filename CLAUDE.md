@@ -87,6 +87,21 @@ GoodNotes 相当（を超える）を目標にした、ブラウザで動く日�
   許可が無い・対応していない時は録音だけ続ける。検索用に texts に `rec|<id>` の記録（ノート内・本棚の検索で 🎙 として出る）。
 - gcBlobs は items の録音の src も残す。完全に削除すると録音の texts も消す。バックアップ・複製は録音ごと。
 
+## 設計の要点（フェーズ6: AI）
+- js/ai.js。公式 SDK（@anthropic-ai/sdk 1.3.0）を esbuild で IIFE にして `vendor/anthropic-sdk.min.js`（window.Anthropic）。
+  `new Anthropic({ apiKey, dangerouslyAllowBrowser: true })` でブラウザから直接。キーは localStorage `kamikobo-web.ai` だけ（設定で消せる）。
+  SDK を更新する時は同じ手順でビルドし直す（`import Anthropic from '@anthropic-ai/sdk'; window.Anthropic = Anthropic;` を `--format=iife --platform=browser --target=safari16`）。
+- モデルは既定 `claude-opus-5-5`（設定で Sonnet 5.5・Haiku 5.5 も選べる）。thinking は付けない（Opus 5.5 は常に adaptive）、
+  `output_config.effort`（要約・質問・カード・整理 = medium、手書き = low）。Opus/Sonnet は `fallbacks: 'default'`（beta `server-side-fallback-2026-07-01`）。
+  `client.beta.messages.stream(...).finalMessage()`、`stop_reason === 'refusal'` を先に見る。JSON は `output_config.format = {type:'json_schema', schema}`。
+  `cache_control: {type:'ephemeral'}`（質問の続きはノート部分がキャッシュから）。例外は SDK の型で日本語に（aiError）。
+- 送る物（noteContent）: ページごとに PDF の文字・置いた文字・読み取った手書き（文字）＋手書き/画像のあるページの絵（JPEG 長辺 1568px、最大 20 枚）＋録音の文字起こし。
+- 手書き→文字: 手書きの線だけを白地に描いて書いた範囲を切り出した PNG → 行ごとの {text, box(0〜1000)} → ページの座標に戻して page.hw = {text, lines, sig}。
+  sig（線の数と最初/最後の id）が変わったら「まだのページ」。検索（ノート内は行の位置に色、本棚は texts の hw）で見つかる。
+- 暗記カード: item.cards = [{id, q, a, page, box, due}]、ライトナー式（箱 0〜5、間隔 0/1/3/7/16/35 日）。TSV で書き出し。
+- 整理: 題名と区切りのページの見出し → 題名の変更・見出しをしおりに（取り消せる）。
+- 使った金額の目安を月ごとに数える（usage × 料金表）。初めて使う時に「送られる」ことの同意を取る。
+
 ## フェーズ
 1. **基盤**（済）: 本棚（フォルダ・サブフォルダ・移動・名前・色・ゴミ箱・並べ替え・題名検索）・ノート（用紙テンプレート・大きさ・向き・紙の色）・
    無限キャンバス・ペン 3 種＋蛍光ペン・消しゴム 2 種・なげなわ・ページの追加/削除/並べ替え/回転・ジェスチャー・Pencil 優先・自動保存・PWA
@@ -95,4 +110,4 @@ GoodNotes 相当（を超える）を目標にした、ブラウザで動く日�
 3. **編集を強く**（済）: テキスト（日本語）・図形の自動補正（書いて止める）・定規・付箋・スタンプ・レーザーポインター・拡大窓・しおり・リンク
 4. **テンプレート集**（済）: プランナー（年・月・週・日、ページ間リンク）・議事録・コーネル・習慣トラッカー・原稿用紙・自作テンプレート（PDF/画像から）・表紙
 5. **録音**（済）: 録音と書き込みの同期再生（書いた時刻の線が光る）・文字起こし（Web Speech）・録音の検索
-6. AI: Claude（利用者の API キー）で要約・質問・手書き→文字（検索できる）・暗記カード・ノートの整理
+6. **AI**（済）: Claude（利用者の API キー）で要約・質問・手書き→文字（検索できる）・暗記カード・ノートの整理

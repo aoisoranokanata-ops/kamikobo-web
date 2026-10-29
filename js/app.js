@@ -79,6 +79,7 @@ class App {
     this.closeSearch();
     this.player.close();
     this.closeRecPanel();
+    this.closeAiPanel();
     this.view.resize();
     this.view.fit(false);
     if (!this.note.board && item.lastPage) this.view.goToPage(item.lastPage);
@@ -580,7 +581,7 @@ class App {
     this.searchMarks = null;
     this.view.requestOver();
     if (!n) return;
-    const full = (p) => [p.text || '', objectsText(p)].filter(Boolean).join('\n');
+    const full = (p) => [p.text || '', objectsText(p), p.hw ? p.hw.text : ''].filter(Boolean).join('\n');
     const withText = n.pages.filter((p) => full(p));
     if (!q) {
       list.append(el('div', { class: 'sp-hint muted' }, withText.length ? `文字のあるページ: ${withText.length} / ${n.pages.length}` :
@@ -622,7 +623,9 @@ class App {
     this.updateStatus();
     try {
       const polys = (await PdfText.findPolys(p, q)).concat((p.images || []).filter((o) => (o.kind === 'text' || o.kind === 'stamp') &&
-        normText(o.kind === 'text' ? o.text : stampText(o)).includes(normText(q).trim())).map((o) => imageCorners(o).flat()));
+        normText(o.kind === 'text' ? o.text : stampText(o)).includes(normText(q).trim())).map((o) => imageCorners(o).flat()))
+        .concat(((p.hw && p.hw.lines) || []).filter((l) => normText(l.text).replace(/\s+/g, '').includes(normText(q).replace(/\s+/g, '')))
+          .map((l) => [l.box[0], l.box[1], l.box[2], l.box[1], l.box[2], l.box[3], l.box[0], l.box[3]]));
       this.searchMarks = new Map([[p.id, polys]]);
       // 当たった所が見えるように
       if (polys.length) {
@@ -999,6 +1002,294 @@ class App {
     toast('リンクを付けました（指でタップすると移動します）');
   }
 
+  // ================= AI（Claude）
+  aiMenu(anchor) {
+    const n = this.note;
+    if (!n) return;
+    const cards = n.item.cards || [], due = cards.filter(cardDue).length;
+    const stale = n.pages.filter((p) => p.strokes.some((s) => s.tool !== 'hl') && (!p.hw || p.hw.sig !== inkSig(p))).length;
+    popMenu(anchor, [
+      { label: '📝 このノートを要約', fn: () => this.aiSummary(n.pages) },
+      n.board ? undefined : { label: '📄 このページを要約', fn: () => this.aiSummary([this.currentPage()]) },
+      { label: '💬 ノートについて質問する', fn: () => this.aiChatOpen() },
+      null,
+      n.board ? undefined : { label: '✍️ このページの手書きを文字に', fn: () => this.aiHandwriting([this.currentPage()]) },
+      { label: `✍️ 手書きを文字に（まだのページ ${stale}）`, disabled: !stale, fn: () => this.aiHandwriting(n.pages.filter((p) => p.strokes.some((s) => s.tool !== 'hl') && (!p.hw || p.hw.sig !== inkSig(p)))) },
+      null,
+      { label: '🃏 暗記カードを作る', fn: () => this.aiMakeCards() },
+      { label: `🃏 暗記カードで練習（${cards.length} 枚・今日 ${due}）`, disabled: !cards.length, fn: () => this.cardsPractice() },
+      { label: '🗂 ノートを整理（題名・見出し）', fn: () => this.aiOrganize() },
+      null,
+      { label: '⚙ AI の設定…', fn: () => this.aiSettings() },
+    ].filter((x) => x !== undefined));
+  }
+  /* 使う前の確かめ（キー・送ることへの同意） */
+  async aiReady() {
+    const c = AIConf.get();
+    if (!c.key) { await this.aiSettings(); if (!AIConf.get().key) return false; }
+    if (!AIConf.get().agreed) {
+      const ok = await confirmBox('AI を使う前に', 'AI を使うと、このノートのページの絵・文字・録音の文字起こしが、あなたの API キーで Anthropic（Claude）に送られます。料金はあなたの API の契約に請求されます。よろしいですか？', '使う');
+      if (!ok) return false;
+      AIConf.set({ agreed: true });
+    }
+    if (!navigator.onLine) { toast('オフラインです。AI はインターネットにつながっている時だけ使えます', { error: true }); return false; }
+    return true;
+  }
+  async aiSettings() {
+    const c = AIConf.get();
+    const key = el('input', { type: 'password', value: c.key || '', placeholder: 'sk-ant-…', class: 'wide', autocomplete: 'off', spellcheck: 'false' });
+    const model = el('select', {}, ...AI_MODELS.map((m) => el('option', { value: m.id, selected: m.id === c.model }, `${m.label}　入力 $${m.in}・出力 $${m.out} / 100万トークン`)));
+    const month = new Date().toISOString().slice(0, 7);
+    const spent = c.month === month ? c.spent || 0 : 0;
+    const v = await modal('AI の設定（Claude）', el('div', { class: 'settings' },
+      el('label', { class: 'field' }, 'Claude の API キー', key,
+        el('span', { class: 'muted small' }, 'console.anthropic.com で作ったキー。この iPad のブラウザの中だけに保存し、Claude API 以外には送りません。')),
+      el('label', { class: 'field' }, 'モデル', model),
+      el('p', { class: 'muted small' }, `今月この端末で使った目安: 約 $${spent.toFixed(3)}（実際の請求は Anthropic の画面で確かめてください）`),
+      el('p', { class: 'muted small' }, '送る内容: ページの絵（長い辺 1568px）・PDF の文字・置いた文字・録音の文字起こし。安全のための断りが出た時は、Anthropic がすすめる別のモデルで続けます。')),
+    [{ label: 'キーを消す', danger: true, value: 'clear' }, { label: 'キャンセル', value: null }, { label: '保存', primary: true, value: 'ok' }], { wide: true });
+    if (v === 'clear') { AIConf.set({ key: '' }); toast('API キーを消しました'); return; }
+    if (v !== 'ok') return;
+    AIConf.set({ key: key.value.trim(), model: model.value });
+    toast('保存しました');
+  }
+
+  // ---- パネル
+  aiPanel(title) {
+    this.closePanel(); this.closeSearch(); this.closeRecPanel();
+    const p = $('#aipanel');
+    p.hidden = false;
+    $('#ai-title').textContent = title;
+    $('#ai-body').innerHTML = '';
+    $('#ai-foot').innerHTML = '';
+    return $('#ai-body');
+  }
+  closeAiPanel() { const p = $('#aipanel'); if (p) p.hidden = true; if (this.aiAbort) this.aiAbort.abort(); this.aiChat = null; }
+  /* ストリーミングの文字を少しずつ Markdown で見せる箱 */
+  aiStreamBox(parent) {
+    const box = el('div', { class: 'ai-out' }, el('div', { class: 'ai-wait' }, el('span', { class: 'spin' }), ' 考えています…'));
+    parent.append(box);
+    let text = '', t = 0;
+    const draw = () => { t = 0; box.innerHTML = ''; box.append(mdToEl(text)); parent.scrollTop = parent.scrollHeight; };
+    return { box, add(s) { text += s; if (!t) t = setTimeout(draw, 80); }, done() { clearTimeout(t); draw(); }, get text() { return text; } };
+  }
+  aiCostLine(r) { return el('div', { class: 'muted small ai-cost' }, `${r.model}・入力 ${(r.usage.input_tokens + (r.usage.cache_read_input_tokens || 0) + (r.usage.cache_creation_input_tokens || 0)).toLocaleString()}・出力 ${r.usage.output_tokens.toLocaleString()} トークン・約 $${r.cost.toFixed(4)}`); }
+  async aiCall(opts, body) {
+    this.aiAbort = new AbortController();
+    const stop = el('button', { class: 'small', onclick: () => this.aiAbort && this.aiAbort.abort() }, '止める');
+    $('#ai-foot').append(stop);
+    try { return await AI.run({ ...opts, signal: this.aiAbort.signal }); }
+    catch (e) { const er = aiError(e); if (er.kind !== 'abort') body.append(el('div', { class: 'ai-err' }, er.message)); return null; }
+    finally { stop.remove(); this.aiAbort = null; }
+  }
+
+  async aiSummary(pages) {
+    if (!await this.aiReady()) return;
+    const n = this.note, body = this.aiPanel(pages.length === 1 && n.pages.length > 1 ? `p.${n.pageIndex(pages[0]) + 1} の要約` : 'ノートの要約');
+    const prog = el('div', { class: 'muted small' }, 'ページを用意しています…');
+    body.append(prog);
+    const content = await noteContent(n, pages, { onProgress: (i, k) => { prog.textContent = `ページを用意しています… ${i}/${k}`; } });
+    prog.remove();
+    content.push({ type: 'text', text: '\nこのノートの内容を要約してください。最初に 2〜3 行の全体のまとめ、次に「## 要点」で大事なことを箇条書き（ページ番号つき）、最後に「## 覚えておくこと」で試験・仕事で押さえるべき点を挙げてください。' });
+    const sb = this.aiStreamBox(body);
+    const r = await this.aiCall({ messages: [{ role: 'user', content }], effort: 'medium', onText: (t) => sb.add(t) }, body);
+    sb.done();
+    if (!r) return;
+    body.append(this.aiCostLine(r));
+    this.aiResultButtons(r.text, 'AI の要約');
+  }
+  aiResultButtons(text, title) {
+    const foot = $('#ai-foot');
+    foot.append(
+      el('button', { class: 'small', onclick: async () => { try { await navigator.clipboard.writeText(text); toast('コピーしました'); } catch { toast('コピーできませんでした', { error: true }); } } }, 'コピー'),
+      el('button', { class: 'small primary', onclick: () => this.pasteAsPage(title, text) }, '新しいページに貼る'));
+  }
+  /* AI の答えを、ノートの最後に新しいページ（文字）として足す */
+  pasteAsPage(title, text) {
+    const n = this.note;
+    if (!n || n.board) { toast('ページのあるノートで使えます'); return; }
+    const plain = text.replace(/^#{1,4}\s+/gm, '■ ').replace(/\*\*([^*]+)\*\*/g, '$1');
+    const p = n.addPage(n.pages.length, null, { type: 'blank', color: (n.pages[0].paper || {}).color || 'white' });
+    const o = fitTextHeight({ id: uid('m'), kind: 'text', x: 36, y: 40, w: p.w - 72, h: 40, rot: 0, text: `【${title}】\n${plain}`, size: 11, color: '#1d1d1f', font: 'gothic', bold: false, bg: null });
+    n.swapBoth(p, [], [], [], [o], 'AI の答えを貼る');
+    this.afterPageChange();
+    this.view.goToPage(n.pages.length - 1);
+    toast('最後のページに貼りました');
+  }
+
+  // ---- 質問（チャット）
+  async aiChatOpen() {
+    if (!await this.aiReady()) return;
+    const body = this.aiPanel('ノートについて質問');
+    this.aiChat = { messages: [], first: true };
+    body.append(el('div', { class: 'muted small' }, 'このノート（ページの手書き・PDF・録音の文字起こし）について何でも聞けます。例:「p.3 の図の意味は？」「この単元で試験に出そうな所は？」'));
+    const inp = el('textarea', { class: 'ai-input', rows: 2, placeholder: '質問を入力（⌘+Enter で送る）' });
+    const send = el('button', { class: 'primary small', onclick: () => this.aiAsk(inp) }, '送る');
+    inp.addEventListener('keydown', (e) => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); this.aiAsk(inp); } });
+    $('#ai-foot').append(inp, send);
+    setTimeout(() => inp.focus(), 50);
+  }
+  async aiAsk(inp) {
+    const q = inp.value.trim(), C = this.aiChat;
+    if (!q || !C || this.aiAbort) return;
+    inp.value = '';
+    const body = $('#ai-body');
+    body.append(el('div', { class: 'ai-q' }, q));
+    let content = [{ type: 'text', text: q }];
+    if (C.first) {                     // 最初の質問にだけノートを付ける（続きはキャッシュで安く読める）
+      const prog = el('div', { class: 'muted small' }, 'ノートを読み込んでいます…');
+      body.append(prog);
+      content = (await noteContent(this.note, this.note.pages)).concat([{ type: 'text', text: '\n質問: ' + q }]);
+      prog.remove();
+    }
+    C.messages.push({ role: 'user', content });
+    const sb = this.aiStreamBox(body);
+    const r = await this.aiCall({ messages: C.messages, effort: 'medium', onText: (t) => sb.add(t) }, body);
+    sb.done();
+    if (!r) { C.messages.pop(); return; }
+    C.first = false;
+    C.messages.push({ role: 'assistant', content: r.text });
+    body.append(this.aiCostLine(r));
+  }
+
+  // ---- 手書き → 文字
+  async aiHandwriting(pages) {
+    if (!await this.aiReady()) return;
+    const n = this.note;
+    pages = pages.filter((p) => p.strokes.some((s) => s.tool !== 'hl'));
+    if (!pages.length) { toast('手書きの線がありません'); return; }
+    const body = this.aiPanel('手書きを文字に');
+    const prog = el('div', { class: 'muted small' }, '');
+    body.append(prog);
+    let cost = 0;
+    this.aiAbort = new AbortController();
+    const stop = el('button', { class: 'small', onclick: () => { this.aiAbortHw = true; } }, '止める');
+    $('#ai-foot').append(stop);
+    this.aiAbortHw = false;
+    for (let i = 0; i < pages.length; i++) {
+      if (this.aiAbortHw) break;
+      const p = pages[i], no = n.pageIndex(p) + 1;
+      prog.textContent = `読み取り中… ${i + 1}/${pages.length}（p.${no}）`;
+      try {
+        const hw = await recognizeHandwriting(p);
+        cost += hw.cost || 0;
+        delete hw.cost;
+        p.hw = hw;
+        n.dirty.add(p.id); n.touch(null);
+        body.append(el('div', { class: 'ai-hw' }, el('b', {}, `p.${no}`), el('pre', {}, hw.text || '（文字は見つかりませんでした）')));
+      } catch (e) { body.append(el('div', { class: 'ai-err' }, `p.${no}: ${aiError(e).message}`)); if (['auth', 'perm', 'net', 'nokey'].includes(aiError(e).kind)) break; }
+    }
+    stop.remove(); this.aiAbort = null;
+    prog.textContent = `終わりました。手書きの文字も検索（🔍・本棚）で見つかるようになりました。約 $${cost.toFixed(4)}`;
+    this.saveSoon();
+  }
+
+  // ---- 暗記カード
+  async aiMakeCards() {
+    if (!await this.aiReady()) return;
+    const n = this.note;
+    const count = el('select', {}, ...[10, 20, 30, 50].map((k) => el('option', { value: k, selected: k === 20 }, `${k} 枚くらい`)));
+    const scope = el('select', {}, el('option', { value: 'all' }, 'ノート全体'), n.board ? null : el('option', { value: 'cur' }, 'このページだけ'));
+    const style = el('select', {}, el('option', { value: 'qa' }, '一問一答'), el('option', { value: 'term' }, '用語 → 意味'), el('option', { value: 'blank' }, '穴埋め'));
+    const v = await modal('暗記カードを作る', el('div', { class: 'settings' }, el('label', { class: 'field' }, '範囲', scope), el('label', { class: 'field' }, '数', count), el('label', { class: 'field' }, '形', style)),
+      [{ label: 'キャンセル', value: null }, { label: '作る', primary: true, value: 'ok' }]);
+    if (v !== 'ok') return;
+    const pages = scope.value === 'cur' ? [this.currentPage()] : n.pages;
+    const body = this.aiPanel('暗記カード');
+    const prog = el('div', { class: 'muted small' }, 'ノートを読み込んでいます…');
+    body.append(prog);
+    const content = await noteContent(n, pages);
+    const how = { qa: '一問一答（q は問い、a は短い答え）', term: '用語と意味（q は用語、a はその意味・説明）', blank: '穴埋め（q は大事な語を「（　）」にした文、a は入る語）' }[style.value];
+    content.push({ type: 'text', text: `\nこのノートから、覚えるための暗記カードを ${count.value} 枚くらい作ってください。形は ${how}。` +
+      'ノートに書かれていることだけを使い、試験に出そうな大事な所を優先します。page はそのカードの元になったページの番号（分からなければ 0）。' });
+    prog.textContent = 'カードを作っています…（少し時間がかかります）';
+    const r = await this.aiCall({ messages: [{ role: 'user', content }], effort: 'medium', json: CARDS_SCHEMA }, body);
+    prog.remove();
+    if (!r) return;
+    const made = (r.data.cards || []).filter((c) => c.q && c.a).map((c) => ({ id: uid('c'), q: c.q.trim(), a: c.a.trim(), page: c.page || 0, box: 0, due: 0, made: Date.now() }));
+    n.item.cards = (n.item.cards || []).concat(made);
+    n.itemDirty = true; this.saveSoon();
+    body.append(el('p', {}, `${made.length} 枚作りました（このノートのカードは全部で ${n.item.cards.length} 枚）。`));
+    for (const c of made.slice(0, 50)) body.append(el('div', { class: 'ai-card' }, el('b', {}, c.q), el('div', {}, c.a)));
+    body.append(this.aiCostLine(r));
+    $('#ai-foot').append(el('button', { class: 'small primary', onclick: () => this.cardsPractice() }, '練習する'),
+      el('button', { class: 'small', onclick: () => this.cardsExport() }, '書き出す（TSV）'));
+  }
+  cardsExport() {
+    const cards = this.note.item.cards || [];
+    const esc = (s) => String(s).replace(/[\t\n]+/g, ' ');
+    offerFile(new Blob([cards.map((c) => `${esc(c.q)}\t${esc(c.a)}`).join('\n')], { type: 'text/tab-separated-values' }), `${safeName(this.note.item.name)}_暗記カード.tsv`);
+  }
+  /* 練習: 今日の分（無ければ全部）を順に。答えを見て「覚えた／もう一度」 */
+  cardsPractice() {
+    const n = this.note, all = n.item.cards || [];
+    if (!all.length) return;
+    let queue = all.filter(cardDue);
+    if (!queue.length) queue = all.slice();
+    queue.sort(() => Math.random() - 0.5);
+    const total = queue.length;
+    let i = 0, shown = false, okCount = 0;
+    const back = el('div', { class: 'modal-back cards-back' });
+    const box = el('div', { class: 'cards-box' });
+    back.append(box);
+    document.body.append(back);
+    const close = () => { back.remove(); n.itemDirty = true; this.saveSoon(); };
+    const draw = () => {
+      box.innerHTML = '';
+      if (i >= queue.length) {
+        box.append(el('h2', {}, 'おつかれさまでした'), el('p', {}, `${total} 枚中 ${okCount} 枚「覚えた」（もう一度の分も練習しました）`),
+          el('div', { class: 'modal-buttons' }, el('button', { class: 'primary', onclick: close }, '閉じる')));
+        return;
+      }
+      const c = queue[i];
+      box.append(el('div', { class: 'cards-top muted small' }, `${i + 1} / ${queue.length}`, c.page ? el('button', { class: 'ghost small', onclick: () => { close(); this.view.goToPage(c.page - 1); this.updateStatus(); } }, `p.${c.page} を見る`) : null,
+        el('button', { class: 'ghost small', onclick: close }, '✕')));
+      box.append(el('div', { class: 'cards-q' }, c.q));
+      if (shown) box.append(el('div', { class: 'cards-a' }, c.a));
+      const btns = el('div', { class: 'modal-buttons' });
+      if (!shown) btns.append(el('button', { class: 'primary', onclick: () => { shown = true; draw(); } }, '答えを見る'));
+      else btns.append(
+        el('button', { class: 'danger', onclick: () => { cardAnswer(c, false); queue.push(c); i++; shown = false; draw(); } }, 'もう一度'),
+        el('button', { class: 'primary', onclick: () => { cardAnswer(c, true); okCount++; i++; shown = false; draw(); } }, '覚えた'));
+      box.append(btns);
+    };
+    draw();
+  }
+
+  // ---- ノートの整理
+  async aiOrganize() {
+    if (!await this.aiReady()) return;
+    const n = this.note, body = this.aiPanel('ノートを整理');
+    const prog = el('div', { class: 'muted small' }, 'ノートを読み込んでいます…');
+    body.append(prog);
+    const content = await noteContent(n, n.pages, { maxImages: 30 });
+    content.push({ type: 'text', text: '\nこのノートを整理します。内容が分かる短い題名（title、30 字以内）、ノート全体の 1〜2 文の説明（summary）、' +
+      '内容の区切りになるページの見出し（pages: page はページ番号、heading は 20 字以内。区切りのページだけ、多くても 30 個）を作ってください。' });
+    prog.textContent = '考えています…';
+    const r = await this.aiCall({ messages: [{ role: 'user', content }], effort: 'medium', json: ORG_SCHEMA }, body);
+    prog.remove();
+    if (!r) return;
+    const d = r.data, title = el('input', { type: 'text', value: d.title || '', class: 'wide' });
+    const useTitle = el('input', { type: 'checkbox', checked: true }), useMarks = el('input', { type: 'checkbox', checked: true });
+    const heads = (d.pages || []).filter((h) => h.page >= 1 && h.page <= n.pages.length);
+    body.append(el('p', {}, d.summary || ''),
+      el('label', { class: 'row' }, useTitle, ' 題名を変える'), title,
+      el('label', { class: 'row' }, useMarks, ` 見出しをしおりにする（${heads.length} か所）`),
+      el('ul', { class: 'ai-heads' }, ...heads.map((h) => el('li', {}, `p.${h.page}　${h.heading}`))),
+      this.aiCostLine(r));
+    $('#ai-foot').append(el('button', { class: 'small primary', onclick: () => {
+      if (useTitle.checked && title.value.trim()) { n.item.name = title.value.trim(); n.itemDirty = true; $('#note-title').textContent = n.item.name; }
+      if (useMarks.checked && heads.length) {
+        const targets = heads.map((h) => [n.pages[h.page - 1], { title: h.heading }]);
+        const before = targets.map(([p]) => p.mark || null);
+        const apply = (vals) => { targets.forEach(([p], k) => { if (vals[k]) p.mark = vals[k]; else delete p.mark; n.dirty.add(p.id); }); n.touch(null); this.updateStatus(); this.refreshPanel(); };
+        n.push({ label: 'AI の見出し', redo: () => apply(targets.map((t) => t[1])), undo: () => apply(before) });
+      }
+      this.saveSoon();
+      toast('整理しました（しおりはページ一覧の 🔖 で見られます）');
+    } }, 'この内容で整理する'));
+  }
+
   // ================= 録音
   bindRec() {
     const R = this.recorder, P = this.player;
@@ -1195,6 +1486,8 @@ class App {
     $('#sel-link').addEventListener('click', () => this.linkDialog());
     $('#btn-mark').addEventListener('click', () => this.toggleMark());
     this.bindRec();
+    $('#btn-ai').addEventListener('click', (e) => this.aiMenu(e.currentTarget));
+    $('#ai-close').addEventListener('click', () => this.closeAiPanel());
     $('#pp-marks').addEventListener('click', () => { this.panelMarks = !this.panelMarks; this.refreshPanel(); });
     $('#sel-color').addEventListener('click', () => {
       const cur = L().sel && L().sel.strokes[0] ? L().sel.strokes[0].color : '#000000';
