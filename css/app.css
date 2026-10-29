@@ -192,3 +192,25 @@ label.row { display: flex; margin: 6px 0; }
 .zw-bar button { font-size: 18px; width: 46px; padding: 0; }
 .zw-sep { width: 10px; }
 #editor.with-zoom { padding-bottom: 34vh; }
+
+/* ---- フェーズ4: テンプレート・表紙 */
+.tpl-tabs { display: flex; gap: 6px; margin-bottom: 8px; flex-wrap: wrap; }
+.tpl { position: relative; }
+.tpl img { width: 96px; height: 128px; object-fit: contain; background: #fff; display: block; }
+.tpl.add { display: flex; flex-direction: column; align-items: center; justify-content: center; width: 110px; min-height: 150px; gap: 6px; }
+.tpl.add b { font-size: 28px; }
+.tpl-del { position: absolute; top: 2px; right: 2px; width: 22px; height: 22px; border-radius: 50%; background: rgba(0,0,0,.6); color: #fff;
+  font-style: normal; display: flex; align-items: center; justify-content: center; font-size: 14px; }
+.planner-opts .row-buttons { align-items: center; }
+label.row.inline { display: inline-flex; margin: 0 10px 0 0; }
+.card .cover.cv { display: flex; align-items: flex-start; justify-content: center; padding: 18% 10px 0; }
+.cv-title { color: #fff; font-weight: 700; font-size: 15px; text-align: center; text-shadow: 0 1px 3px rgba(0,0,0,.35); word-break: break-all;
+  background: rgba(255,255,255,.12); padding: 6px 8px; border-radius: 4px; max-width: 100%; }
+.cv-title.ink { color: #2b2e35; text-shadow: none; background: rgba(255,255,255,.55); }
+.cv-title.band { color: #2b2e35; text-shadow: none; background: transparent; margin-top: 70%; }
+.cv-dialog { display: flex; gap: 18px; align-items: flex-start; flex-wrap: wrap; }
+.cv-preview { width: 150px; flex: none; }
+.cv-preview .cover { width: 150px; aspect-ratio: 3 / 4; border-radius: 4px 10px 10px 4px; box-shadow: 0 4px 14px rgba(0,0,0,.45); overflow: hidden; position: relative; }
+.cv-preview .cover.cv { display: flex; align-items: flex-start; justify-content: center; padding: 18% 10px 0; }
+.cv-preview .cover.none { background: #fff; color: #888; display: flex; align-items: center; justify-content: center; }
+.cv-row { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 10px; }

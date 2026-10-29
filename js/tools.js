@@ -271,11 +271,12 @@ class LassoTool {
       let ext = 0;
       for (let i = 2; i < pts.length; i += 2) ext = Math.max(ext, Math.hypot(pts[i] - pts[0], pts[i + 1] - pts[1]));
       if (ext * v.s < 8) {            // タップ: 画像を 1 枚選ぶ（上にある方から）
-        const im = (page.images || []).slice().reverse().find((x) => imageHit(x, pts[0], pts[1]));
+        const im = (page.images || []).slice().reverse().find((x) => !x.hidden && imageHit(x, pts[0], pts[1]));
         this.setSel(page, [], im ? [im] : []);
       } else if (pts.length >= 6) {
         const chosen = page.strokes.filter((s) => strokeInPoly(s, pts));
         const imgs = (page.images || []).filter((im) => {
+          if (im.hidden) return false;
           const c = imageCorners(im);
           return pointInPoly(c.reduce((a, q) => a + q[0], 0) / 4, c.reduce((a, q) => a + q[1], 0) / 4, pts);
         });

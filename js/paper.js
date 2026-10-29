@@ -14,17 +14,27 @@ const PAPER_COLORS = [
   { id: 'green', label: '緑', bg: '#eef5ec', line: '#bcd3b8', strong: '#d6a0a0' },
 ];
 
-/* 用紙の種類。mm は線の間隔（ミリ）。 */
+/* 用紙の種類。mm は線の間隔（ミリ）。cat: basic（基本）・study（勉強・仕事）・planner（プランナーが作る。一覧には出さない） */
 const PAPER_TYPES = [
-  { id: 'blank', label: '無地' },
-  { id: 'ruled', label: '横罫', mm: 7 },
-  { id: 'ruled-narrow', label: '横罫（狭い）', mm: 6 },
-  { id: 'grid', label: '方眼', mm: 5 },
-  { id: 'dot', label: 'ドット', mm: 5 },
-  { id: 'cornell', label: 'コーネル', mm: 7 },
-  { id: 'todo', label: 'ToDo', mm: 9 },
-  { id: 'music', label: '五線譜' },
-  { id: 'genko', label: '原稿用紙' },
+  { id: 'blank', label: '無地', cat: 'basic' },
+  { id: 'ruled', label: '横罫', mm: 7, cat: 'basic' },
+  { id: 'ruled-narrow', label: '横罫（狭い）', mm: 6, cat: 'basic' },
+  { id: 'grid', label: '方眼', mm: 5, cat: 'basic' },
+  { id: 'dot', label: 'ドット', mm: 5, cat: 'basic' },
+  { id: 'music', label: '五線譜', cat: 'basic' },
+  { id: 'cornell', label: 'コーネル', mm: 7, cat: 'study' },
+  { id: 'study', label: '勉強ノート', cat: 'study' },
+  { id: 'meeting', label: '議事録', cat: 'study' },
+  { id: 'todo', label: 'ToDo', mm: 9, cat: 'study' },
+  { id: 'habit', label: '習慣トラッカー', cat: 'study' },
+  { id: 'twocol', label: '2 段', cat: 'study' },
+  { id: 'storyboard', label: '絵コンテ', cat: 'study' },
+  { id: 'genko', label: '原稿用紙', cat: 'study' },
+  { id: 'p-year', label: '年間', cat: 'planner' },
+  { id: 'p-month', label: '月間', cat: 'planner' },
+  { id: 'p-week', label: '週間', cat: 'planner' },
+  { id: 'p-day', label: '1 日', cat: 'planner' },
+  { id: 'image', label: '自作（画像）', cat: 'custom' },
 ];
 
 const MM = 72 / 25.4;
@@ -107,7 +117,18 @@ function drawPaper(g, pg, s) {
       g.stroke();
       break;
     }
-    default: break;
+    case 'image': {            // 自作テンプレート（画像）
+      if (!pg.paper.src) break;
+      if (g.drawPaperImage) { g.drawPaperImage(pg.paper.src, W, H); break; }       // PDF に書き出す時
+      const img = ImageCache.get(pg.paper.src);
+      if (img) g.drawImage(img, 0, 0, W, H);
+      break;
+    }
+    default: {                 // 勉強・仕事の用紙、プランナー（templates.js）
+      const L = templateLayout(pg, pc);
+      if (L) drawLayout(g, L);
+      break;
+    }
   }
 }
 

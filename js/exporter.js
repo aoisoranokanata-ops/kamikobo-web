@@ -19,11 +19,14 @@ function matInv(m) {
 /* PDF の操作を文字で集める「なんちゃって canvas」（用紙の線を描くのに使う） */
 class PdfCtx {
   constructor(ops) {
-    this.ops = ops; this.path = []; this.cur = [0, 0]; this.stack = []; this.texts = [];
+    this.ops = ops; this.path = []; this.cur = [0, 0]; this.stack = []; this.texts = []; this.imgs = [];
     this.fillStyle = '#000'; this.strokeStyle = '#000'; this.lineWidth = 1; this.font = '10px sans-serif'; this.globalAlpha = 1;
   }
   save() { this.stack.push({ fillStyle: this.fillStyle, strokeStyle: this.strokeStyle, lineWidth: this.lineWidth, font: this.font }); this.ops.push('q'); }
   restore() { const s = this.stack.pop(); if (s) Object.assign(this, s); this.ops.push('Q'); }
+  measureText(t) { _mctx.font = this.font; return _mctx.measureText(t); }
+  /* 自作テンプレート（画像）の下地: 後で画像の命令に差し替える */
+  drawPaperImage(src, w, h) { this.imgs.push({ src, w, h, mark: this.ops.length }); this.ops.push(null); }
   beginPath() { this.path = []; }
   moveTo(x, y) { this.path.push(`${fmtN(x)} ${fmtN(y)} m`); this.cur = [x, y]; this.start = [x, y]; }
   lineTo(x, y) { this.path.push(`${fmtN(x)} ${fmtN(y)} l`); this.cur = [x, y]; }
@@ -47,7 +50,7 @@ class PdfCtx {
   fillRect(x, y, w, h) { this.ops.push(rgbOp(this.fillStyle, false), `${fmtN(x)} ${fmtN(y)} ${fmtN(w)} ${fmtN(h)} re`, 'f'); }
   /* 文字（用紙の見出し）は小さな画像にして置く（日本語の字形を PDF に入れずに済む） */
   fillText(text, x, y) {
-    const size = parseFloat(this.font) || 10, K = 6;
+    const size = parseFloat((this.font.match(/([\d.]+)px/) || [])[1]) || 10, K = 6;
     const c = document.createElement('canvas'), g = c.getContext('2d');
     const font = this.font.replace(/[\d.]+px/, size * K + 'px');
     g.font = font;
@@ -57,7 +60,7 @@ class PdfCtx {
     g.fillText(text, 2, size * K * 1.05);
     const mark = this.ops.length;
     this.ops.push(null);           // 後で画像の命令に差し替える
-    this.texts.push({ canvas: c, x: x - 2 / K, y: y - size * 1.05, w: w / K, h: h / K, mark });
+    this.texts.push({ canvas: c, x: x - 2 / K, y: y - size * 1.05, w: w / K, h: h / K, mark, key: `t|${this.font}|${this.fillStyle}|${text}` });
   }
 }
 
@@ -178,15 +181,16 @@ async function exportPdf(pages, opt = {}) {
       if (!ref) { ref = ctx.register(ctx.obj({ Type: 'ExtGState', CA: op, ca: op, ...(multiply ? { BM: 'Multiply' } : {}) })); gsCache.set(key, ref); }
       return page.node.newExtGState('GS', ref).asString().slice(1);
     };
-    const putImage = async (canvasOrSrc, box, rot = 0) => {
-      let ref = typeof canvasOrSrc === 'string' ? imgCache.get(canvasOrSrc) : null;
+    const putImage = async (canvasOrSrc, box, rot = 0, key = null) => {
+      const ck = typeof canvasOrSrc === 'string' ? canvasOrSrc : key;
+      let ref = ck ? imgCache.get(ck) : null;
       if (!ref) {
         let bytes, type;
         if (typeof canvasOrSrc === 'string') { const v = await Src.get(canvasOrSrc); bytes = v.data; type = v.type; }
         else { const b = await new Promise((r) => canvasOrSrc.toBlob(r, 'image/png')); bytes = await b.arrayBuffer(); type = 'image/png'; }
         const emb = type === 'image/png' ? await out.embedPng(bytes) : await out.embedJpg(bytes);
         ref = emb.ref;
-        if (typeof canvasOrSrc === 'string') imgCache.set(canvasOrSrc, ref);
+        if (ck) imgCache.set(ck, ref);         // 同じ画像・同じ見出しの文字は 1 回だけ入れる
       }
       const name = page.node.newXObject('Im', ref).asString().slice(1);
       const { x, y, w, h } = box, c = Math.cos(rot), s = Math.sin(rot), cx = x + w / 2, cy = y + h / 2;
@@ -203,7 +207,8 @@ async function exportPdf(pages, opt = {}) {
         drawBoardPaper(pc, { paper: p._boardPaper }, { x0: p._x0, y0: p._y0, x1: p._x0 + p.w, y1: p._y0 + p.h }, 2);
         ops.push('Q');
       } else drawPaper(pc, p, 2);
-      for (const t of pc.texts) ops[t.mark] = (await putImage(t.canvas, t)).join('\n');
+      for (const im of pc.imgs) ops[im.mark] = (await putImage(im.src, { x: 0, y: 0, w: im.w, h: im.h })).join('\n');
+      for (const t of pc.texts) ops[t.mark] = (await putImage(t.canvas, t, 0, t.key)).join('\n');
     }
     for (const im of p.images || []) {
       const k = im.kind || 'image';

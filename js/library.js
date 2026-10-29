@@ -133,8 +133,9 @@ class Library {
     const thumb = isFolder
       ? el('div', { class: 'folder-icon', style: { '--fc': it.color || FOLDER_COLORS[0] } },
         el('span', {}, String(this.children(it.id).length)))
-      : el('div', { class: 'cover' + (it.kind === 'board' ? ' board' : '') }, it.thumb ? el('img', { src: it.thumb, alt: '' }) : null,
-        it.kind === 'board' ? el('span', { class: 'cover-tag' }, '∞') : null);
+      : it.cover ? coverEl(it.cover, it.name)
+        : el('div', { class: 'cover' + (it.kind === 'board' ? ' board' : '') }, it.thumb ? el('img', { src: it.thumb, alt: '' }) : null,
+          it.kind === 'board' ? el('span', { class: 'cover-tag' }, '∞') : null);
     const sub = isFolder ? 'フォルダ' : `${fmtDate(it.updated)}${it.pageIds && it.kind !== 'board' ? ' ・ ' + it.pageIds.length + ' ページ' : ''}`;
     const where = this.query && it.parent !== 'root' ? this.path(it.parent).map((f) => f.name).join(' › ') : '';
     const more = el('button', { class: 'card-more', title: 'その他', onclick: (e) => { e.stopPropagation(); this.itemMenu(it, e.currentTarget); } }, '⋯');
@@ -170,6 +171,12 @@ class Library {
     ];
     if (it.type === 'note') {
       items.push({ label: '複製', fn: () => this.duplicate(it) });
+      if (it.kind !== 'board') items.push({ label: '表紙…', fn: async () => {
+        const v = await coverDialog(it.cover, it.name);
+        if (v === undefined) return;
+        if (v) it.cover = v; else delete it.cover;
+        it.updated = Date.now(); await Store.putItem(it); this.render();
+      } });
       if (it.kind !== 'board') items.push({ label: 'ほかのノートと結合…', fn: () => this.mergeDialog(it) });
       items.push(null, { label: '📄 PDF に書き出す・共有', fn: () => this.exportPdfOf(it) });
       items.push({ label: '🗂 ファイルで書き出す（.kmkw）', fn: () => this.exportFileOf(it) });

@@ -74,7 +74,7 @@ function newStamp(st, x, y) {
 function drawObject(g, o, opt = {}) {
   const k = o.kind || 'image';
   if (k === 'image') { drawImageItem(g, o); return; }
-  if (k === 'link' && !opt.screen) return;
+  if (k === 'link' && (!opt.screen || o.hidden)) return;      // プランナーのリンクは見えないまま
   g.save();
   g.translate(o.x + o.w / 2, o.y + o.h / 2);
   if (o.rot) g.rotate(o.rot);

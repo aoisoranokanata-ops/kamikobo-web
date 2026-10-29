@@ -143,7 +143,7 @@ class Note {
   }
   addPage(at, like = null, paper = null) {
     const ref = like || this.pages[Math.min(at, this.pages.length - 1)] || this.pages[0];
-    const p = blankPage(this.item, uid('p'), ref ? { w: ref.w, h: ref.h, rot: ref.rot, paper: paper || ref.paper } : null);
+    const p = blankPage(this.item, uid('p'), ref ? { w: ref.w, h: ref.h, rot: ref.rot, paper: paper || ref.paper, bg: paper ? null : ref.bg } : null);
     this.structCmd('ページを追加', () => this.pages.splice(at, 0, p));
     return p;
   }
@@ -211,11 +211,13 @@ function blankPage(item, id, like = null) {
   const size = item.size || 'A4';
   let [w, h] = PAGE_SIZES[size] || PAGE_SIZES.A4;
   if (item.landscape) [w, h] = [h, w];
-  return {
+  const p = {
     id, noteId: item.id, w: like ? like.w : w, h: like ? like.h : h, rot: like ? like.rot || 0 : 0,
     paper: like ? like.paper : { ...(item.paper || { type: 'ruled', color: 'white' }) },
     infinite: item.kind === 'board', strokes: [], images: [],
   };
+  if (like && like.bg && like.bg.tpl) p.bg = { ...like.bg };      // 自作テンプレート（PDF）は次のページにも
+  return p;
 }
 
 /* 検索用の文字の記録（PDF の文字と、置いた文字）。all = 空のページも（保存先の古い記録を消すため） */

@@ -87,11 +87,13 @@ const Store = {
         if (!c) { res(); return; }
         const p = c.value;
         if (p.bg) used.add(p.bg.src);
+        if (p.paper && p.paper.src) used.add(p.paper.src);
         for (const im of p.images || []) used.add(im.src);
         c.continue();
       };
       rq.onerror = () => res();
     }));
+    for (const t of MyTemplates.list()) used.add(t.src);          // 自作テンプレートの中身も残す
     const keys = await this.tx(['blobs'], 'readonly', (s) => this.req(s.getAllKeys()));
     const gone = keys.filter((k) => String(k).startsWith('src|') && !used.has(k));
     if (gone.length) await this.tx(['blobs'], 'readwrite', (s) => { for (const k of gone) s.delete(k); });
@@ -121,7 +123,7 @@ const Store = {
 function pageRecord(pg) {
   const r = { id: pg.id, noteId: pg.noteId, w: pg.w, h: pg.h, rot: pg.rot || 0, infinite: !!pg.infinite, paper: pg.paper,
     strokes: pg.strokes.map(strokeRecord) };
-  if (pg.bg) r.bg = { src: pg.bg.src, page: pg.bg.page, vt: pg.bg.vt };
+  if (pg.bg) r.bg = { src: pg.bg.src, page: pg.bg.page, vt: pg.bg.vt, ...(pg.bg.tpl ? { tpl: true } : {}) };
   if (pg.mark) r.mark = { ...pg.mark };
   if (pg.images && pg.images.length) r.images = pg.images.map(imageRecord);
   return r;
