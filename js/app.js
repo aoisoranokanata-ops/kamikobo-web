@@ -757,6 +757,7 @@ class App {
     popMenu(anchor, [
       { label: '📄 PDF に書き出す・共有…', fn: () => this.exportDialog() },
       { label: '🗂 このノートをファイルで（紙工房 Web で開ける .kmkw）', fn: () => this.exportNoteFile() },
+      { label: '🖍 マーカーした所を書き出す（箇条書き・表）', fn: () => this.highlightsDialog(this.note.pages, this.note.item.name, true) },
     ]);
   }
   async exportDialog() {
@@ -1328,14 +1329,18 @@ class App {
   /* 文字起こしを文字（文字の道具と同じ物）にして貼る: ページのノートは今のページの後ろに新しいページを足す（長ければ何ページにも）、
      無限キャンバスは見ている所に */
   pasteTranscript(rec) {
+    if (!(rec.transcript || []).length) return;
+    this.pasteTextPages(`🎙 ${rec.name}（${fmtDate(rec.created)}・${fmtClock(rec.dur)}）`, transcriptText(rec, false).split('\n'), '文字起こし');
+  }
+  /* 文字を文字（文字の道具と同じ物）にして貼る: ページのノートは今のページの後ろに新しいページを足す（長ければ何ページにも）、
+     無限キャンバスは見ている所に。what は知らせの言葉 */
+  pasteTextPages(head, lines, what) {
     const n = this.note;
-    if (!n || !(rec.transcript || []).length) return;
-    const head = `🎙 ${rec.name}（${fmtDate(rec.created)}・${fmtClock(rec.dur)}）`;
-    const lines = transcriptText(rec, false).split('\n');
+    if (!n) return;
     const mk = (text, w) => fitTextHeight({ id: uid('m'), kind: 'text', x: 0, y: 0, w, h: 10, rot: 0, text, size: 12, color: '#1d1d1f', font: 'gothic', bold: false, bg: null });
     if (n.board) {
       this.placeObject((x, y) => { const o = mk([head, ...lines].join('\n'), 420); o.x = x - o.w / 2; o.y = y - Math.min(o.h, 300) / 2; return o; });
-      toast('文字起こしを貼りました');
+      toast(`${what}を貼りました`);
       return;
     }
     const cur = this.currentPage(), M = 48, W = cur.w - M * 2, maxH = cur.h - M * 2;
@@ -1354,11 +1359,73 @@ class App {
       return p;
     });
     const at = n.pageIndex(cur) + 1;
-    n.insertPages(at, pages, '文字起こしを貼る');
+    n.insertPages(at, pages, `${what}を貼る`);
     this.afterPageChange();
     this.view.goToPage(at);
     this.updateStatus();
-    toast(`文字起こしを ${pages.length} ページに貼りました（元に戻すで取り消せます）`);
+    toast(`${what}を ${pages.length} ページに貼りました（元に戻すで取り消せます）`);
+  }
+
+  // ================= マーカーした所の書き出し（js/highlights.js）
+  /* pages の蛍光ペンの所の文字を、箇条書き（テキスト・Markdown）か表（CSV）にして保存・コピー・ノートに貼る。
+     inEditor = 開いているノート（貼れる） */
+  async highlightsDialog(pages, name, inEditor) {
+    if (inEditor) await this.saveNote(true);
+    const pr = progressBox('マーカーした所の文字を読み取っています');
+    let res;
+    try { res = await collectHighlights(pages, (i, k) => pr.set(i, k)); }
+    catch (e) { toast('読み取れませんでした: ' + (e.message || e), { error: true, ms: 6000 }); return; } finally { pr.close(); }
+    const { items, blind } = res;
+    const blindMsg = blind ? `文字の無い所のマーカー ${blind} か所は入っていません（OCR していないスキャン・手書きの上のマーカーは文字にできません）` : '';
+    if (!items.length) {
+      toast(blind ? `マーカーの下に PDF の文字がありませんでした。${blindMsg}` : 'このノートにはマーカー（蛍光ペン）の線がありません', { ms: 7000 });
+      return;
+    }
+    const opt = loadJSON('hlexport', { fmt: 'txt', pages: true, byColor: false });
+    const fmt = el('select', {}, ...[['txt', 'テキスト（・の箇条書き）'], ['md', 'Markdown（- の箇条書き）'], ['csv', '表（CSV: Excel・Numbers で開ける）']]
+      .map(([v, l]) => el('option', { value: v, selected: opt.fmt === v }, l)));
+    const pg = el('input', { type: 'checkbox', checked: opt.pages });
+    const bc = el('input', { type: 'checkbox', checked: opt.byColor });
+    const prev = el('textarea', { class: 'hl-prev', readonly: true, spellcheck: 'false' });
+    const out = () => highlightsText(name, items, opt.fmt, opt).replace(/^\ufeff/, '');
+    const redraw = () => {
+      Object.assign(opt, { fmt: fmt.value, pages: pg.checked, byColor: bc.checked });
+      saveJSON('hlexport', opt);
+      pg.parentElement.hidden = bc.parentElement.hidden = opt.fmt === 'csv';
+      prev.value = out();
+    };
+    for (const c of [fmt, pg, bc]) c.addEventListener('change', redraw);
+    const ext = () => ({ txt: 'txt', md: 'md', csv: 'csv' })[opt.fmt];
+    const type = () => ({ txt: 'text/plain', md: 'text/markdown', csv: 'text/csv' })[opt.fmt] + ';charset=utf-8';
+    const body = el('div', { class: 'settings' },
+      el('p', { class: 'muted small' }, `${items.length} か所（${new Set(items.map((h) => h.page)).size} ページ）。2 行にまたがって引いた所は 1 つの文にまとめています。`),
+      el('label', { class: 'field' }, '形', fmt),
+      el('label', { class: 'row' }, pg, ' ページ番号を付ける'),
+      el('label', { class: 'row' }, bc, ' 色ごとにまとめる'),
+      prev,
+      blindMsg ? el('p', { class: 'muted small' }, blindMsg) : null);
+    redraw();
+    const copy = () => {
+      const t = out();
+      const ok = () => toast('コピーしました');
+      if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(t).then(ok, () => { prev.select(); document.execCommand('copy'); ok(); });
+      else { prev.select(); document.execCommand('copy'); ok(); }
+      return false;              // 小窓は閉じない
+    };
+    const v = await modal('マーカーした所', body, [
+      { label: '閉じる', value: null },
+      { label: '📋 コピー', value: null, check: copy },
+      inEditor ? { label: '📝 ノートに貼る', value: 'paste' } : null,
+      { label: '📄 ファイルで保存', primary: true, value: 'save' },
+    ].filter(Boolean), { wide: true, noFocus: true });
+    if (v === 'save') {
+      const text = highlightsText(name, items, opt.fmt, opt);
+      await offerFile(new Blob([text], { type: type() }), `${safeName(name)}_マーカー.${ext()}`, 'マーカーした所');
+    } else if (v === 'paste') {
+      const [head, , ...lines] = highlightsText(name, items, 'txt', opt).split('\n');
+      while (lines.length && !lines[lines.length - 1]) lines.pop();
+      this.pasteTextPages(`🖍 ${head}`, lines, 'マーカーした所');
+    }
   }
   showPlayBar() { $('#playbar').hidden = false; this.updatePlayBar(); }
   hidePlayBar() { $('#playbar').hidden = true; }

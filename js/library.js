@@ -222,6 +222,7 @@ class Library {
       if (it.kind !== 'board') items.push({ label: 'ほかのノートと結合…', fn: () => this.mergeDialog(it) });
       items.push(null, { label: '📄 PDF に書き出す・共有', fn: () => this.exportPdfOf(it) });
       items.push({ label: '🗂 ファイルで書き出す（.kmkw）', fn: () => this.exportFileOf(it) });
+      if (it.kind !== 'board') items.push({ label: '🖍 マーカーした所を書き出す（箇条書き・表）', fn: async () => this.app.highlightsDialog((await Note.load(it)).pages, it.name, false) });
     }
     if (it.type === 'folder') {
       items.push({ label: '色…', fn: () => this.colorMenu(it, anchor) });
