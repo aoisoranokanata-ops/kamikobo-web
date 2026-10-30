@@ -4,14 +4,14 @@
    「線の太さの半分（ただし行の高さの 0.7 倍まで）＋行の高さの 0.15 倍」以内なら、その字は引いてある。
    線ごとに引いた字を読む順に並べ、間が空白だけ（引き損ねた 1 字までは許す）ならひと続きに。
    同じ色（色合いで見た名前）で重なる・空白や改行だけを挟んで続く所はつなぐ。
-   黄と赤は「上下に分かれた 1 つの文」もつなぐ: 次の行に続いていて、間の引き損ね（行末・行頭）が 12 字まで、
+   黄・赤・ピンクは「上下に分かれた 1 つの文」もつなぐ: 次の行に続いていて、間の引き損ね（行末・行頭）が 12 字まで、
    前が文の終わり（。！？）でなければ、間の字も入れて 1 つに。ページをまたぐ時も（間の字＝柱・ページ番号は入れない）。
-   赤は重要（★）。文全体（前の。の後から次の。まで、見つかった側だけ広げる）も持っておき、書き出す時に選べる。
+   赤・ピンクは重要（★）。文全体（前の。の後から次の。まで、見つかった側だけ広げる）も持っておき、書き出す時に選べる。
    線と文字はどちらもページの座標（pdf.js の表示座標）なので、ページの回転とは関係ない。
    文字の無い所（OCR していないスキャン・手書きの上）に引いたマーカーは数えるだけ（blind）。 */
 
-const HL_JOIN = new Set(['黄', '赤']);         // 上下に分かれた文をつなぐ色
-const HL_IMPORTANT = '赤';
+const HL_JOIN = new Set(['黄', '赤', 'ピンク']);     // 上下に分かれた文をつなぐ色
+const HL_IMPORTANT = new Set(['赤', 'ピンク']);      // 重要（★）の色
 const SENT_END = /[。．！？!?]/;
 /* 色合いで名前を付ける（自分で選んだ赤も「赤」に。最初からある桃色は「ピンク」） */
 function hlColorName(c) {
@@ -26,6 +26,11 @@ function hlColorName(c) {
 function tidyText(s) {
   const cjk = '[\\u3001-\\u30ff\\u3400-\\u9fff\\uf900-\\ufaff\\uff01-\\uff0f\\uff1a-\\uff20]';
   return s.replace(/\s+/g, ' ').replace(new RegExp(`(${cjk}) (?=${cjk})`, 'g'), '$1').trim();
+}
+/* 引いた所の頭に入ってしまった句読点・記号（「このように、国政調査権」の「、」など）と、終わりの読点を取る。
+   開きかっこ（「（『【）と、終わりの。！？・閉じかっこは文の一部なので残す */
+function trimMarks(s) {
+  return s.replace(/^[\s、。，．,.・:：;；!！?？)）」』】〕〉》\]}”’"'…‥〜~\-－―‐ー※*＊#＃■□●○◆◇▲△▼▽★☆→←↑↓]+/, '').replace(/[\s、，,]+$/, '');
 }
 
 /* pages の蛍光ペンの所の文字。{items:[{page(0 始まり), color, text}]（ページ順・読む順）, blind: 文字の無かった線の数} */
@@ -79,7 +84,23 @@ async function collectHighlights(pages, onProgress) {
     const at = new Map(chars.map((c) => [c.i, c]));
     const first = (sp) => { let i = sp.a; while (i < sp.b && !at.has(i)) i++; return at.get(i); };
     const last = (sp) => { let i = sp.b - 1; while (i >= sp.a && !at.has(i)) i--; return at.get(i); };
-    const nextLine = (p, q) => { const c1 = last(p), c2 = first(q); if (!c1 || !c2) return false; const th = Math.max(c1.th, c2.th); return c1.v ? Math.abs(c1.x - c2.x) > th * 0.6 : Math.abs(c1.y - c2.y) > th * 0.6; };
+    const otherLine = (c1, c2) => { const th = Math.max(c1.th, c2.th); return c1.v ? Math.abs(c1.x - c2.x) > th * 0.6 : Math.abs(c1.y - c2.y) > th * 0.6; };
+    const nextLine = (p, q) => { const c1 = last(p), c2 = first(q); return !!(c1 && c2 && otherLine(c1, c2)); };
+    /* i の字の段落（行の間隔・字の大きさがそろって続く所）の始め・終わり。文の終わりが見つからない時に、文全体をそこまで広げる。
+       行の間が行の高さの 1.9 倍より空く・字の大きさが 3/4〜4/3 から外れる所（柱・ページ番号・見出し）で止まる */
+    const blockEdge = (i, dir) => {
+      let c0 = at.get(i), e = i;
+      for (let k = i + dir; c0 && k >= 0 && k < joined.length && Math.abs(k - i) <= 120; k += dir) {
+        const c = at.get(k);
+        if (!c) continue;
+        if (otherLine(c0, c)) {
+          const step = c0.v ? Math.abs(c0.x - c.x) : Math.abs(c0.y - c.y), r = c.th / c0.th;
+          if (step > Math.max(c0.th, c.th) * 1.9 || r < 0.75 || r > 1.33) break;
+        }
+        c0 = c; e = k;
+      }
+      return e;
+    };
     const merged = [];
     for (const sp of spans) {
       const pv = merged[merged.length - 1];
@@ -93,11 +114,11 @@ async function collectHighlights(pages, onProgress) {
     }
     const pageItems = [];
     for (const sp of merged) {
-      const text = tidyText(joined.slice(sp.a, sp.b));
+      const text = trimMarks(tidyText(joined.slice(sp.a, sp.b)));
       if (!text) continue;
-      const h = { page: pi, pageEnd: pi, color: sp.color, fam: sp.fam, important: sp.fam === HL_IMPORTANT, text,
+      const h = { page: pi, pageEnd: pi, color: sp.color, fam: sp.fam, important: HL_IMPORTANT.has(sp.fam), text,
         head: joined.slice(0, sp.a).replace(/\s/g, '').length, tail: joined.slice(sp.b).replace(/\s/g, '').length };
-      if (h.important) { const [s0, s1] = sentenceRange(joined, sp.a, sp.b); h.sentence = tidyText(joined.slice(s0, s1)); h.sOpen = !SENT_END.test(h.sentence.slice(-1)); }
+      if (h.important) { const [s0, s1] = sentenceRange(joined, sp.a, sp.b, (i) => blockEdge(i, -1), (i) => blockEdge(i, 1) + 1); h.sentence = trimMarks(tidyText(joined.slice(s0, s1))); h.sOpen = !SENT_END.test(h.sentence.slice(-1)); }
       pageItems.push(h);
     }
     // ページをまたぐ文（黄・赤）: 前のページの最後と、このページの最初（間は柱・ページ番号くらい＝12 字まで、字は入れない）
@@ -113,11 +134,15 @@ async function collectHighlights(pages, onProgress) {
   return { items, blind };
 }
 
-/* [a, b) を含む文の範囲。前の文の終わり・次の文の終わりが 120 字以内に見つかった側だけ広げる（見つからない側＝ページの端の文はそのまま） */
-function sentenceRange(t, a, b) {
-  let s = a, e = b;
+/* [a, b) を含む文の範囲。前の文の終わり・次の文の終わりが 120 字以内に見つかればそこまで、
+   見つからなければ（ページの最初・最後の文）その段落の始め・終わりまで（柱やページ番号の行には広げない） */
+function sentenceRange(t, a, b, lineStart, lineEnd) {
+  let s = -1, e = -1;
   for (let k = a - 1; k >= 0 && a - k <= 120; k--) if (SENT_END.test(t[k])) { s = k + 1; break; }
-  if (!SENT_END.test(t.slice(a, b).trim().slice(-1))) for (let k = b; k < t.length && k - b <= 120; k++) if (SENT_END.test(t[k])) { e = k + 1; break; }
+  if (SENT_END.test(t.slice(a, b).trim().slice(-1))) e = b;
+  else for (let k = b; k < t.length && k - b <= 120; k++) if (SENT_END.test(t[k])) { e = k + 1; break; }
+  if (s < 0) s = lineStart ? Math.min(a, lineStart(a)) : a;
+  if (e < 0) e = lineEnd ? Math.max(b, lineEnd(b - 1)) : b;
   return [s, e];
 }
 
@@ -139,7 +164,7 @@ function highlightsText(name, list, fmt, opt = {}) {
     return '\ufeff' + lines.join('\r\n') + '\r\n';
   }
   const groups = new Map();
-  if (opt.byColor && rows.some((h) => h.important)) groups.set(HL_IMPORTANT, []);
+  if (opt.byColor) for (const f of HL_IMPORTANT) if (rows.some((h) => h.fam === f)) groups.set(f, []);     // 重要の色を先に
   for (const h of rows) {
     const k = opt.byColor ? h.fam : '';
     if (!groups.has(k)) groups.set(k, []);
@@ -148,7 +173,7 @@ function highlightsText(name, list, fmt, opt = {}) {
   const md = fmt === 'md';
   const lines = md ? [`# ${name} — マーカーした所`, '', `${date}・${rows.length} 件`, ''] : [`${name} — マーカーした所（${date}・${rows.length} 件）`, ''];
   for (const [fam, l] of groups) {
-    const label = fam === HL_IMPORTANT ? `${fam}（重要）` : fam;
+    const label = HL_IMPORTANT.has(fam) ? `${fam}（重要）` : fam;
     if (fam) lines.push(md ? `## ${label}` : `【${label}】`);
     for (const h of l) {
       const t = h.important ? (md ? `**★ ${h.text}**` : `★ ${h.text}`) : h.text;
