@@ -96,6 +96,22 @@ class App {
     this.view.invalidate();
     this.setTool(this.toolName === 'hand' ? 'pen' : this.toolName);
     this.updateStatus();
+    if (item.textV !== TEXT_VER) this.refreshNoteText(this.note);
+  }
+  /* 前の版で読み込んだ PDF の文字を読み直す（1.5 より前は日本語の対応表を読めず、OCR した PDF の文字などが抜けていた） */
+  refreshNoteText(n) {
+    const mark = () => { n.item.textV = TEXT_VER; n.itemDirty = true; };
+    if (!n.pages.some((p) => p.bg && !p.bg.tpl)) { mark(); this.saveSoon(); return; }
+    this._textRefresh = (async () => {
+      await new Promise((r) => setTimeout(r, 600));          // 開いた直後の描画を先に
+      const changed = await refreshPdfText(n.pages);
+      for (const p of changed) n.dirty.add(p.id);
+      mark();
+      if (this.note === n) await this.saveNote(); else await n.save();
+      if (this.note !== n) return;
+      if (changed.length) toast(`PDF の文字を読み直しました（${changed.length} ページ）`);
+      if (!$('#searchpanel').hidden) this.runSearch();
+    })().catch((e) => console.warn(e)).finally(() => { this._textRefresh = null; });
   }
   async closeNote() {
     if (!this.note) return;
@@ -799,48 +815,63 @@ class App {
     this.view.requestOver();
     if (!n) return;
     const full = (p) => [p.text || '', objectsText(p)].filter(Boolean).join('\n');
-    const withText = n.pages.filter((p) => full(p));
+    const hint = (t) => el('div', { class: 'sp-hint muted' }, t);
+    const reading = this._textRefresh ? 'PDF の文字を読み直しています…（終わったらもう一度探します）' : '';
     if (!q) {
-      list.append(el('div', { class: 'sp-hint muted' }, withText.length ? `文字のあるページ: ${withText.length} / ${n.pages.length}` :
-        'このノートには検索できる文字がありません（読み込んだ PDF の文字・文字の道具・付箋・スタンプ・録音の文字起こしを探せます）'));
+      const withText = n.pages.filter((p) => full(p));
+      list.append(hint(withText.length ? `文字のあるページ: ${withText.length} / ${n.pages.length}` :
+        'このノートには検索できる文字がありません（読み込んだ PDF の文字・文字の道具・付箋・スタンプ・録音の文字起こしを探せます。' +
+        '文字の入っていない、スキャンしただけの PDF は探せません）'));
+      if (reading) list.append(hint(reading));
       return;
     }
-    let count = 0;
-    const hits = [];
-    n.pages.forEach((p, i) => {
-      const txt = full(p);
-      if (!txt) return;
-      const sn = snippetOf(txt, q);
-      if (!sn) return;
-      hits.push(i);
-      count++;
+    // 見つかるまで、だんだんゆるく探す（空白・改行は いつも無視）
+    let level = 'exact', pageHits = [], recHits = [];
+    for (const lv of SEARCH_LEVELS) {
+      level = lv; pageHits = []; recHits = [];
+      n.pages.forEach((p, i) => {
+        const txt = full(p), m = txt && matchRanges(txt, q, lv, p)[0];
+        if (m) pageHits.push({ i, sn: snippetAt(txt, m) });
+      });
+      for (const r of n.item.recordings || []) {
+        for (const seg of r.transcript || []) {
+          const m = matchRanges(seg.text, q, lv, seg)[0];
+          if (m) recHits.push({ r, seg, sn: snippetAt(seg.text, m) });
+        }
+      }
+      if (pageHits.length || recHits.length) break;
+    }
+    this._searchLevel = level;
+    for (const { i, sn } of pageHits) {
       const row = el('button', { class: 'sp-row' }, el('span', { class: 'sp-page' }, `${i + 1}`),
         el('span', { class: 'sp-snip' }, sn.before, el('b', {}, sn.hit), sn.after));
       row.addEventListener('click', () => this.showHit(i, q));
       list.append(row);
-    });
-    for (const r of n.item.recordings || []) {
-      for (const seg of r.transcript || []) {
-        const sn = snippetOf(seg.text, q);
-        if (!sn) continue;
-        count++;
-        const row = el('button', { class: 'sp-row' }, el('span', { class: 'sp-page' }, '🎙'),
-          el('span', { class: 'sp-snip' }, `${r.name} ${fmtClock(seg.t)}  `, sn.before, el('b', {}, sn.hit), sn.after));
-        row.addEventListener('click', () => this.player.play(r, Math.max(0, seg.t - 1000)));
-        list.append(row);
-      }
     }
-    if (!count) list.append(el('div', { class: 'sp-hint muted' }, '見つかりませんでした'));
-    else list.prepend(el('div', { class: 'sp-hint muted' }, `${count} ページで見つかりました`));
-    this._hits = hits;
+    for (const { r, seg, sn } of recHits) {
+      const row = el('button', { class: 'sp-row' }, el('span', { class: 'sp-page' }, '🎙'),
+        el('span', { class: 'sp-snip' }, `${r.name} ${fmtClock(seg.t)}  `, sn.before, el('b', {}, sn.hit), sn.after));
+      row.addEventListener('click', () => this.player.play(r, Math.max(0, seg.t - 1000)));
+      list.append(row);
+    }
+    if (!pageHits.length && !recHits.length) {
+      list.append(hint('見つかりませんでした'));
+      if (reading) list.append(hint(reading));
+    } else {
+      const head = [hint(`${pageHits.length ? pageHits.length + ' ページ' : ''}${pageHits.length && recHits.length ? '・' : ''}${recHits.length ? '録音 ' + recHits.length + ' か所' : ''}で見つかりました`)];
+      if (SEARCH_LEVEL_NOTE[level]) head.push(hint(SEARCH_LEVEL_NOTE[level]));
+      list.prepend(...head);
+    }
+    this._hits = pageHits.map((h) => h.i);
   }
   async showHit(i, q) {
     const n = this.note, p = n.pages[i];
     this.view.goToPage(i);
     this.updateStatus();
     try {
-      const polys = (await PdfText.findPolys(p, q)).concat((p.images || []).filter((o) => (o.kind === 'text' || o.kind === 'stamp') &&
-        normText(o.kind === 'text' ? o.text : stampText(o)).includes(normText(q).trim())).map((o) => imageCorners(o).flat()));
+      const lv = this._searchLevel || 'exact';
+      const polys = (await PdfText.findPolys(p, q, lv)).concat((p.images || []).filter((o) => (o.kind === 'text' || o.kind === 'stamp') &&
+        textHas(o.kind === 'text' ? o.text : stampText(o), q, lv)).map((o) => imageCorners(o).flat()));
       this.searchMarks = new Map([[p.id, polys]]);
       // 当たった所が見えるように
       if (polys.length && !this.view.single) {

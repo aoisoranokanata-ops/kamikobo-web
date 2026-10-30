@@ -60,7 +60,10 @@ const PdfDocs = {
     const lib = await Lib.pdfjs();
     return lib.getDocument({
       data: new Uint8Array(data.slice(0)),          // worker に渡すと元が使えなくなるので写しを渡す
-      cMapUrl: 'vendor/pdfjs/cmaps/', cMapPacked: true, standardFontDataUrl: 'vendor/pdfjs/standard_fonts/',
+      // 文字の対応表・標準フォントは worker が読むので、相対だと worker の場所（vendor/pdfjs/）から探して見つからない
+      // （→ 日本語の CID フォントが読めず、OCR した PDF の文字が抜け・表示もされなかった）。必ず絶対の URL で渡す
+      cMapUrl: new URL('vendor/pdfjs/cmaps/', location.href).href, cMapPacked: true,
+      standardFontDataUrl: new URL('vendor/pdfjs/standard_fonts/', location.href).href,
       isEvalSupported: false,
     }).promise;
   },
@@ -259,24 +262,18 @@ const PdfText = {
     for (const it of tc.items) { s += it.str || ''; if (it.hasEOL) s += '\n'; }
     return s.replace(/[ \t]+\n/g, '\n').trim();
   },
-  /* 検索語に当たった所の四角形（ページの座標）。文字は項目の中で等分と見なす */
-  async findPolys(p, q) {
+  /* 検索語に当たった所の四角形（ページの座標）。文字は項目の中で等分と見なす。level は search.js の探し方 */
+  async findPolys(p, q, level = 'exact') {
     const items = await this.items(p);
     if (!q) return [];
-    const norm = (s) => normText(s);
     let joined = '';
     const map = [];        // joined の各文字 → [項目番号, 項目内の位置]
-    items.forEach((it, i) => { for (let k = 0; k < it.str.length; k++) { joined += norm(it.str[k]); map.push([i, k]); } });
-    const nq = norm(q).replace(/\s+/g, '');
-    if (!nq) return [];
-    // 空白・改行を無視して探す
-    let squeezed = '', back = [];
-    for (let i = 0; i < joined.length; i++) if (!/\s/.test(joined[i])) { squeezed += joined[i]; back.push(i); }
+    items.forEach((it, i) => { joined += it.str; for (let k = 0; k < it.str.length; k++) map.push([i, k]); });
     const out = [];
-    for (let at = squeezed.indexOf(nq); at >= 0; at = squeezed.indexOf(nq, at + nq.length)) {
-      const a = back[at], b = back[at + nq.length - 1];
+    for (const { a, b: end } of matchRanges(joined, q, level)) {
       const spans = new Map();
-      for (let j = a; j <= b; j++) {
+      for (let j = a; j < end; j++) {
+        if (/\s/.test(joined[j])) continue;
         const [ii, kk] = map[j];
         const sp = spans.get(ii) || [kk, kk];
         sp[0] = Math.min(sp[0], kk); sp[1] = Math.max(sp[1], kk);
@@ -296,21 +293,22 @@ const PdfText = {
   },
 };
 
-/* 検索のための正規化: 全角英数→半角・大文字→小文字・カタカナ→ひらがなはしない（意味が変わるため） */
-function normText(s) {
-  return s.normalize('NFKC').toLowerCase();
-}
-
-/* 文字列の中の当たりの前後（一覧に出す） */
-function snippetOf(text, q, span = 28) {
-  const orig = text.replace(/\s+/g, ' ');
-  const nt = normText(orig);
-  const t = nt.length === orig.length ? orig : nt;      // 長さが変わらなければ元の字のまま見せる
-  const nq = normText(q).trim();
-  const i = nt.indexOf(nq);
-  if (i < 0) return null;
-  const a = Math.max(0, i - span), b = Math.min(t.length, i + nq.length + span);
-  return { before: (a > 0 ? '…' : '') + t.slice(a, i), hit: t.slice(i, i + nq.length), after: t.slice(i + nq.length, b) + (b < t.length ? '…' : '') };
+/* 読み込んだ PDF の文字を読み直す（p.bg のページ。自作テンプレートは除く）。変わったページを返す。
+   1.5 より前は日本語の文字の対応表を読めず、OCR した PDF などの文字が抜けていた → item.textV が古いノートは読み直す */
+const TEXT_VER = 2;
+async function refreshPdfText(pages, onProgress) {
+  const changed = [];
+  const list = pages.filter((p) => p.bg && !p.bg.tpl);
+  for (let i = 0; i < list.length; i++) {
+    const p = list[i];
+    try {
+      const t = await PdfText.pageText(await PdfDocs.page(p.bg.src, p.bg.page));
+      if (t !== (p.text || '')) { p.text = t; changed.push(p); }
+    } catch { /* 開けない PDF はそのまま */ }
+    if (onProgress) onProgress(i + 1, list.length);
+  }
+  for (const p of list) PdfText._items.delete(p.bg.src + '|' + p.bg.page);
+  return changed;
 }
 
 // ---- 読み込み
