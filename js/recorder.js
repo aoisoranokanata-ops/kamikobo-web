@@ -36,8 +36,27 @@ function recTextRecs(item) {
 }
 
 // ================= 録音
+/* mode: 'both'（録音＋文字起こし）| 'audio'（録音だけ）| 'text'（文字起こしだけ。音声は残さない）。
+   iPad の Safari は、録音（getUserMedia）と音声認識が同じマイクを取り合い、文字起こしが動かない・録音が無音になることがある
+   → 確実に文字にしたい時は 'text'。止める時は MediaRecorder の stop の出来事が来ないことがある（iPad）ので、
+   最後の断片が届いたら少し待って終わる・それでも 4 秒で終わる。 */
+const REC_MODES = { both: '録音＋文字起こし', audio: '録音だけ', text: '文字起こしだけ（音声は残さない）' };
+const RECOG_ERRORS = {
+  'not-allowed': '文字起こしが許可されていません（iPad の「設定」→「アプリ」→ Safari のマイク、「一般」→「キーボード」→「音声入力」を確認）',
+  'service-not-allowed': '文字起こしが許可されていません（iPad の「設定」→「一般」→「キーボード」→「音声入力」をオンに）',
+  'audio-capture': 'マイクを録音と同時に使えません。iPad では 🎙 の「文字起こしだけ」にすると確実です',
+  'network': '音声認識のサーバーにつながりません（ネットにつないでください）',
+  'language-not-supported': '日本語の音声認識が使えません',
+};
+const RECOG_FATAL = new Set(['not-allowed', 'service-not-allowed', 'language-not-supported']);
+/* 文字起こしをテキストに（書き出し・貼り付け） */
+function transcriptText(rec, withHead = true) {
+  const lines = (rec.transcript || []).map((x) => `${fmtClock(x.t)}  ${x.text}`);
+  return (withHead ? [`${rec.name}（${fmtDate(rec.created)}・${fmtClock(rec.dur)}）`, ''] : []).concat(lines).join('\n');
+}
+
 class Recorder {
-  constructor(app) { this.app = app; this.rec = null; this.mr = null; this.chunks = []; this.state = 'idle'; this.recog = null; this._tick = 0; }
+  constructor(app) { this.app = app; this.rec = null; this.mr = null; this.stream = null; this.chunks = []; this.state = 'idle'; this.recog = null; this._tick = 0; }
   get active() { return this.state !== 'idle'; }
   pickType() {
     for (const t of ['audio/mp4', 'audio/mp4;codecs=mp4a.40.2', 'audio/aac', 'audio/webm;codecs=opus', 'audio/webm', 'audio/ogg;codecs=opus']) {
@@ -51,25 +70,32 @@ class Recorder {
     const last = this.rec.segs[this.rec.segs.length - 1];
     return this.state === 'recording' ? last.audio + (Date.now() - last.wall) : this._pausedAt || 0;
   }
-  async start() {
+  async start(mode = this.app.recMode()) {
     const n = this.app.note;
     if (!n || this.active) return;
-    if (!navigator.mediaDevices || !window.MediaRecorder) { toast('このブラウザは録音に対応していません', { error: true }); return; }
-    let stream;
-    try { stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true } }); }
-    catch (e) { toast('マイクを使えません（設定でマイクを許可してください）: ' + (e.message || e.name), { error: true, ms: 6000 }); return; }
-    const type = this.pickType();
-    this.stream = stream;
-    this.mr = new MediaRecorder(stream, type ? { mimeType: type, audioBitsPerSecond: 64000 } : undefined);
-    this.chunks = [];
+    const wantAudio = mode !== 'text', wantText = mode !== 'audio';
+    if (!wantAudio && !SpeechRec) { toast('このブラウザは文字起こしに対応していません', { error: true }); return; }
+    let stream = null, mr = null, type = '';
+    if (wantAudio) {
+      if (!navigator.mediaDevices || !window.MediaRecorder) { toast('このブラウザは録音に対応していません', { error: true }); return; }
+      try { stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true } }); }
+      catch (e) { toast('マイクを使えません（設定でマイクを許可してください）: ' + (e.message || e.name), { error: true, ms: 6000 }); return; }
+      type = this.pickType();
+      mr = new MediaRecorder(stream, type ? { mimeType: type, audioBitsPerSecond: 64000 } : undefined);
+    }
     const now = Date.now();
-    this.rec = { id: uid('r'), src: 'src|' + uid('a'), name: `録音 ${fmtDate(now).slice(5)}`, type: this.mr.mimeType || type || 'audio/mp4',
-      created: now, dur: 0, segs: [{ wall: now, audio: 0 }], transcript: [] };
+    this.stream = stream; this.mr = mr; this.chunks = [];
+    this.rec = { id: uid('r'), src: wantAudio ? 'src|' + uid('a') : null, name: `${wantAudio ? '録音' : '文字起こし'} ${fmtDate(now).slice(5)}`,
+      type: wantAudio ? (mr.mimeType || type || 'audio/mp4') : '', created: now, dur: 0, segs: [{ wall: now, audio: 0 }], transcript: [] };
     this.note = n;
-    this.mr.ondataavailable = (e) => { if (e.data && e.data.size) this.chunks.push(e.data); };
-    this.mr.start(1000);
+    this.recogErr = ''; this.recogFails = 0; this._deny = false; this.interim = '';
+    if (mr) {
+      mr.ondataavailable = (e) => { if (e.data && e.data.size) this.chunks.push(e.data); };
+      mr.start(1000);
+    }
     this.state = 'recording';
-    if (this.app.settings.transcribe) this.startRecog();
+    this.wantText = wantText;
+    if (wantText) this.startRecog();
     this._tick = setInterval(() => this.onTick(), 500);
     this._autosave = setInterval(() => this.persist(false), 60000);       // 落ちても 1 分前までは残る
     this.app.showRecBar();
@@ -78,7 +104,7 @@ class Recorder {
   pause() {
     if (this.state !== 'recording') return;
     this._pausedAt = this.pos();
-    this.mr.pause();
+    try { if (this.mr) this.mr.pause(); } catch { /* */ }
     this.state = 'paused';
     this.stopRecog();
     this.app.updateRecBar();
@@ -86,53 +112,83 @@ class Recorder {
   resume() {
     if (this.state !== 'paused') return;
     this.rec.segs.push({ wall: Date.now(), audio: this._pausedAt });
-    this.mr.resume();
+    try { if (this.mr) this.mr.resume(); } catch { /* */ }
     this.state = 'recording';
-    if (this.app.settings.transcribe) this.startRecog();
+    this.recogFails = 0;
+    if (this.wantText) this.startRecog();
     this.app.updateRecBar();
   }
+  /* 止めて保存。押したらすぐ「保存しています」にして、何があっても最後は閉じる */
   async stop() {
-    if (!this.active) return null;
-    clearInterval(this._tick); clearInterval(this._autosave);
+    if (!this.active || this.state === 'stopping') return null;
     this.rec.dur = this.pos();
+    this.state = 'stopping';
+    clearInterval(this._tick); clearInterval(this._autosave);
     this.stopRecog();
-    const done = new Promise((res) => { this.mr.onstop = res; });
-    try { this.mr.stop(); } catch { /* */ }
-    await Promise.race([done, new Promise((r) => setTimeout(r, 2500))]);
-    for (const t of this.stream.getTracks()) t.stop();
-    this.state = 'idle';
+    this.app.updateRecBar();
     const rec = this.rec;
-    await this.persist(true);
-    this.rec = null; this.mr = null; this.chunks = [];
-    this.app.hideRecBar();
-    toast(`「${rec.name}」を保存しました（${fmtClock(rec.dur)}）`);
+    let saved = false;
+    try {
+      if (this.mr) await this.stopRecorder(this.mr);
+      saved = await this.persist(true);
+    } catch (e) { toast('録音を止められませんでした: ' + (e.message || e), { error: true, ms: 6000 }); }
+    finally {
+      if (this.stream) for (const t of this.stream.getTracks()) { try { t.stop(); } catch { /* */ } }
+      this.state = 'idle';
+      this.rec = null; this.mr = null; this.stream = null; this.chunks = [];
+      this.app.hideRecBar();
+    }
+    const n = rec.transcript.length;
+    if (rec.src && !saved) toast(n ? '音声を受け取れませんでした（文字起こしは保存しました）' : '音声を受け取れませんでした', { error: true, ms: 6000 });
+    else if (saved || n) toast(`「${rec.name}」を保存しました（${fmtClock(rec.dur)}${n ? `・文字起こし ${n} 件` : ''}）`);
+    if (this.wantText && !n) toast('文字起こしはありませんでした' + (this.recogErr ? `: ${this.recogErr}` : ''), { error: !!this.recogErr, ms: 7000 });
+    if (n) this.app.afterRecording(rec);
     return rec;
   }
-  /* 今までの音声を保存し、ノートの録音の一覧に入れる */
+  stopRecorder(mr) {
+    return new Promise((res) => {
+      if (mr.state === 'inactive') { res(); return; }
+      let t = 0, over = false;
+      const done = () => { if (over) return; over = true; clearTimeout(t); res(); };
+      mr.addEventListener('stop', done);
+      mr.addEventListener('dataavailable', () => { clearTimeout(t); t = setTimeout(done, 600); });   // iPad: stop が来ない時は最後の断片で
+      t = setTimeout(done, 4000);
+      try { mr.stop(); } catch { done(); }
+    });
+  }
+  /* 今までの音声・文字起こしを保存し、ノートの録音の一覧に入れる。音声を保存できたら true */
   async persist(final) {
     const rec = this.rec, item = this.note && this.note.item;
-    if (!rec || !item || !this.chunks.length) return;
+    if (!rec || !item) return false;
     if (!final) rec.dur = this.pos();
+    const hasAudio = !!rec.src && this.chunks.length > 0;
+    if (!hasAudio && !rec.transcript.length) return false;          // まだ何も無い（iPad は止めるまで断片が来ないことがある）
     try {
-      const data = await new Blob(this.chunks, { type: rec.type }).arrayBuffer();
-      await Store.putBlob(rec.src, { type: rec.type, name: rec.name, data });
+      if (hasAudio) {
+        const data = await new Blob(this.chunks, { type: rec.type }).arrayBuffer();
+        await Store.putBlob(rec.src, { type: rec.type, name: rec.name, data });
+      }
       const list = (item.recordings || []).filter((r) => r.id !== rec.id);
-      item.recordings = list.concat([{ ...rec, transcript: rec.transcript.slice(), segs: rec.segs.slice() }]);
+      const entry = { ...rec, transcript: rec.transcript.slice(), segs: rec.segs.slice() };
+      if (!hasAudio) entry.src = null;
+      item.recordings = list.concat([entry]);
       item.updated = Date.now();
       await Store.saveNote(item, [], [], recTextRecs(item));
       if (this.app.note && this.app.note.item === item) this.app.refreshRecPanel();
-    } catch (e) { toast('録音を保存できませんでした: ' + (e.message || e), { error: true }); }
+      return hasAudio;
+    } catch (e) { toast('録音を保存できませんでした: ' + (e.message || e), { error: true }); return false; }
   }
 
   // ---- 文字起こし（Web Speech）
   startRecog() {
-    if (!SpeechRec) { if (!this._warned) { this._warned = true; toast('このブラウザは文字起こしに対応していません（録音は続けます）'); } return; }
+    if (!SpeechRec) { this.recogErr = 'このブラウザは文字起こしに対応していません（録音は続けます）'; this.app.updateRecBar(); return; }
     if (this.recog) return;
     const r = new SpeechRec();
     r.lang = 'ja-JP'; r.continuous = true; r.interimResults = true;
     this.recog = r;
-    let startAt = null;
+    let startAt = null, got = false;
     r.onresult = (e) => {
+      got = true; this.recogFails = 0; this.recogErr = '';
       let interim = '';
       for (let i = e.resultIndex; i < e.results.length; i++) {
         const res = e.results[i];
@@ -144,22 +200,35 @@ class Recorder {
         } else interim += res[0].transcript;
       }
       this.interim = interim;
+      this._interimAt = startAt;
       this.app.updateRecBar();
     };
     r.onerror = (e) => {
-      if (e.error === 'not-allowed' || e.error === 'service-not-allowed') { toast('文字起こしが許可されていません（iPad の「設定」→ Siri・音声入力を確認）', { error: true, ms: 6000 }); this._deny = true; }
+      if (e.error === 'no-speech' || e.error === 'aborted') return;
+      this.recogErr = RECOG_ERRORS[e.error] || `文字起こしでエラー（${e.error}）`;
+      if (RECOG_FATAL.has(e.error)) this._deny = true;
+      this.app.updateRecBar();
     };
     r.onend = () => {
+      this.flushInterim();            // iPad は確定しないまま終わることがある
       this.recog = null;
-      if (this.state === 'recording' && !this._deny) setTimeout(() => { if (this.state === 'recording') this.startRecog(); }, 300);    // 止まっても続ける
+      if (!got) this.recogFails++;
+      if (this.state !== 'recording' || this._deny) return;
+      if (this.recogFails >= 6) { this.recogErr = this.recogErr || '文字起こしが止まりました（音声認識が始まりません）'; this.app.updateRecBar(); return; }
+      setTimeout(() => { if (this.state === 'recording' && !this.recog) this.startRecog(); }, Math.min(5000, 300 * 2 ** this.recogFails));    // 止まっても続ける
     };
-    try { r.start(); } catch { this.recog = null; }
+    try { r.start(); } catch (e) { this.recog = null; this.recogErr = '文字起こしを始められません: ' + (e.message || e); }
+  }
+  flushInterim() {
+    const text = (this.interim || '').trim();
+    if (text && this.rec) this.rec.transcript.push({ t: this._interimAt != null ? this._interimAt : Math.max(0, this.pos() - 1500), text });
+    this.interim = ''; this._interimAt = null;
   }
   stopRecog() {
     const r = this.recog;
     this.recog = null;
-    this.interim = '';
-    if (r) { r.onend = null; try { r.stop(); } catch { /* */ } }
+    this.flushInterim();
+    if (r) { r.onend = null; r.onresult = null; r.onerror = null; try { r.stop(); } catch { /* */ } }
   }
 }
 
@@ -169,6 +238,7 @@ class Player {
   get open() { return !!this.rec; }
   async play(rec, at = 0) {
     this.close(true);
+    if (!rec.src) { toast('これは文字起こしだけで、音声はありません'); return; }
     const v = await Src.get(rec.src).catch(() => null);
     if (!v) { toast('録音のデータが見つかりません', { error: true }); return; }
     this.rec = rec;

@@ -8,7 +8,7 @@
    ネットワーク優先。iPad のホーム画面アプリでは待機中の SW が切り替わらないことがあるので、待機させない。
    ファイルを直したら、下の VERSION と js/util.js の APP_VERSION を必ず上げること。
    ------------------------------------------------------------ */
-const VERSION = '1.5.0';
+const VERSION = '1.6.0';
 const PREFIX = 'kamikobo-web-';
 const CACHE = PREFIX + 'v' + VERSION;
 // pdf.js が日本語などの PDF に使う文字の対応表・標準フォント（オフラインでも開けるように最初に取っておく）

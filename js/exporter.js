@@ -290,7 +290,7 @@ async function buildBackup(ids, kind = 'library') {
   const pages = [], texts = [], srcs = new Set();
   for (const it of items) {
     if (it.type !== 'note') continue;
-    for (const r of it.recordings || []) srcs.add(r.src);
+    for (const r of it.recordings || []) if (r.src) srcs.add(r.src);      // 文字起こしだけの記録は音声が無い
     const recs = (await Store.getPages(it.pageIds)).filter(Boolean);
     for (const r of recs) {
       if (r.bg) srcs.add(r.bg.src);
