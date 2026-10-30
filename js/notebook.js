@@ -33,16 +33,20 @@ class Note {
   }
 
   // ---- 位置
+  /* dir = 'v'（縦に並べる、横は中央が 0）| 'h'（横に並べる、縦は中央が 0） */
   layout() {
-    let y = 0;
+    const horiz = this.dir === 'h';
+    let acc = 0, maxW = 0, maxH = 0;
     for (const p of this.pages) {
       const rot = p.rot || 0;
       const [dw, dh] = rot % 180 ? [p.h, p.w] : [p.w, p.h];
-      p.disp = { x: -dw / 2, y, w: dw, h: dh };
-      y += dh + PAGE_GAP;
+      p.disp = horiz ? { x: acc, y: -dh / 2, w: dw, h: dh } : { x: -dw / 2, y: acc, w: dw, h: dh };
+      acc += (horiz ? dw : dh) + PAGE_GAP;
+      maxW = Math.max(maxW, dw); maxH = Math.max(maxH, dh);
     }
-    this.height = Math.max(0, y - PAGE_GAP);
-    this.width = Math.max(0, ...this.pages.map((p) => p.disp.w));
+    const total = Math.max(0, acc - PAGE_GAP);
+    this.width = horiz ? total : maxW;
+    this.height = horiz ? maxH : total;
   }
   /* ページの座標 → 文書の空間 の行列 */
   pageMatrix(p) {

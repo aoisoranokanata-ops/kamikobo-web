@@ -183,6 +183,37 @@ const BgRender = {
   },
 };
 
+// ---- PDF の目次（アウトライン）: [{title, depth, page(0 始まり or null)}]
+const PdfOutline = {
+  _c: new Map(),
+  get(src) {
+    if (!this._c.has(src)) {
+      const p = (async () => {
+        const doc = await PdfDocs.get(src);
+        const ol = await doc.getOutline();
+        const out = [];
+        const walk = async (items, depth) => {
+          for (const it of items || []) {
+            let page = null;
+            try {
+              let d = it.dest;
+              if (typeof d === 'string') d = await doc.getDestination(d);
+              if (Array.isArray(d) && d[0] != null) page = typeof d[0] === 'object' ? await doc.getPageIndex(d[0]) : Number.isInteger(d[0]) ? d[0] : null;
+            } catch { /* 行き先の無い項目 */ }
+            out.push({ title: it.title, depth, page });
+            await walk(it.items, depth + 1);
+          }
+        };
+        await walk(ol, 0);
+        return out;
+      })();
+      p.catch(() => this._c.delete(src));
+      this._c.set(src, p);
+    }
+    return this._c.get(src);
+  },
+};
+
 // ---- PDF の文字
 const PdfText = {
   _items: new Map(),       // `${src}|${page}` → [{str, poly:[x,y,...]}]
