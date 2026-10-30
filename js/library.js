@@ -202,6 +202,7 @@ class Library {
       null,
       { label: '📄 PDF・画像を読み込む', fn: async () => { const f = await pickFiles('application/pdf,.pdf,image/*,.kmkw'); if (f.length) this.app.importFiles(f); } },
       { label: '🗂 紙工房ファイル（.kmkw）・バックアップを読み込む', fn: () => this.app.restorePick() },
+      { label: '☁️ Google Drive から読み込む', fn: () => GDrive.go(this.app, { kind: 'import' }) },
     ]);
   }
   sortMenu(anchor) {

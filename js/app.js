@@ -63,6 +63,7 @@ class App {
     await this.library.refresh();
     const last = loadJSON('session', {}).open;
     if (last && this.library.byId(last) && !this.library.byId(last).trashed) await this.openNote(last);
+    await GDrive.resume(this);          // Google にサインインしに行って戻ってきた時は、やりかけの事を続ける
   }
 
   // ================= ノートを開く・閉じる
@@ -527,6 +528,10 @@ class App {
       items.push({ label: '📄 PDF を後ろに挿入', fn: () => this.insertPdfPick() });
       items.push({ label: '📓 ほかのノートを後ろに挿入', fn: () => this.insertNotePick() });
     }
+    if (GDrive.configured()) {
+      items.push(null, { label: '☁️ Google Drive の画像', fn: () => GDrive.go(this, { kind: 'insert-image' }) });
+      if (!n.board) items.push({ label: '☁️ Google Drive の PDF を後ろに挿入', fn: () => GDrive.go(this, { kind: 'insert-pdf' }) });
+    }
     popMenu(anchor, items);
   }
   async insertImagesPick() {
@@ -564,11 +569,13 @@ class App {
   }
   async insertPdfPick() {
     const files = (await pickFiles('application/pdf,.pdf', false)).filter((f) => /pdf$/i.test(f.type) || /\.pdf$/i.test(f.name));
-    if (!files.length) return;
+    if (files.length) await this.insertPdf(files[0]);
+  }
+  async insertPdf(file) {
     const n = this.note, at = this.view.currentPageIndex() + 1;
     const pr = progressBox('PDF を読み込んでいます');
     try {
-      const pages = await pagesFromPdf(files[0], (i, k) => pr.set(i, k));
+      const pages = await pagesFromPdf(file, (i, k) => pr.set(i, k));
       n.insertPages(at, pages, 'PDF を挿入');
       this.afterPageChange();
       this.view.goToPage(at);
@@ -960,7 +967,8 @@ class App {
         el('div', { class: 'row-buttons' },
           el('button', { onclick: () => this.backupAll() }, '本棚をまるごと書き出す（.kmkw）'),
           el('button', { onclick: () => this.restorePick() }, 'バックアップ・.kmkw を読み込む')),
-        el('span', { class: 'muted small' }, 'データはこの iPad のブラウザの中にあります。ときどき書き出して「ファイル」や iCloud Drive に置いておくと安心です。')),
+        el('span', { class: 'muted small' }, 'データはこの iPad のブラウザの中にあります。ときどき書き出して「ファイル」や iCloud Drive・Google Drive に置いておくと安心です。')),
+      el('div', { class: 'field' }, 'Google Drive', GDrive.settingsSection(this)),
       el('p', { class: 'muted' }, `紙工房 Web ${APP_VERSION}　${used}`));
     await modal('設定', body, [{ label: '閉じる', primary: true, value: true }], { wide: true });
   }
