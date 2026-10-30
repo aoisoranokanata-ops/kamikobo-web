@@ -1381,27 +1381,39 @@ class App {
       toast(blind ? `マーカーの下に PDF の文字がありませんでした。${blindMsg}` : 'このノートにはマーカー（蛍光ペン）の線がありません', { ms: 7000 });
       return;
     }
-    const opt = loadJSON('hlexport', { fmt: 'txt', pages: true, byColor: false });
+    const opt = loadJSON('hlexport', { fmt: 'txt', pages: true, byColor: false, redSentence: true, onlyImportant: false });
     const fmt = el('select', {}, ...[['txt', 'テキスト（・の箇条書き）'], ['md', 'Markdown（- の箇条書き）'], ['csv', '表（CSV: Excel・Numbers で開ける）']]
       .map(([v, l]) => el('option', { value: v, selected: opt.fmt === v }, l)));
-    const pg = el('input', { type: 'checkbox', checked: opt.pages });
+    // ページ番号は ON / OFF のボタン（どの形にも効く。CSV ではページの列）
+    const pgOn = el('button', { class: 'small', onclick: () => { opt.pages = true; redraw(); } }, 'ON');
+    const pgOff = el('button', { class: 'small', onclick: () => { opt.pages = false; redraw(); } }, 'OFF');
     const bc = el('input', { type: 'checkbox', checked: opt.byColor });
+    const rs = el('input', { type: 'checkbox', checked: opt.redSentence });
+    const oi = el('input', { type: 'checkbox', checked: opt.onlyImportant });
+    const hasRed = items.some((h) => h.important);
     const prev = el('textarea', { class: 'hl-prev', readonly: true, spellcheck: 'false' });
+    const count = el('p', { class: 'muted small' });
     const out = () => highlightsText(name, items, opt.fmt, opt).replace(/^\ufeff/, '');
     const redraw = () => {
-      Object.assign(opt, { fmt: fmt.value, pages: pg.checked, byColor: bc.checked });
+      Object.assign(opt, { fmt: fmt.value, byColor: bc.checked, redSentence: rs.checked, onlyImportant: oi.checked });
       saveJSON('hlexport', opt);
-      pg.parentElement.hidden = bc.parentElement.hidden = opt.fmt === 'csv';
+      pgOn.classList.toggle('on', opt.pages); pgOff.classList.toggle('on', !opt.pages);
+      bc.parentElement.hidden = opt.fmt === 'csv';
+      const rows = highlightRows(items, opt), by = new Map();
+      for (const h of rows) by.set(h.fam, (by.get(h.fam) || 0) + 1);
+      count.textContent = `${rows.length} か所（${[...by].map(([f, n]) => `${f === HL_IMPORTANT ? '★' + f : f} ${n}`).join('・')}）。黄・赤の上下に分かれた文は 1 つにつないでいます。`;
       prev.value = out();
     };
-    for (const c of [fmt, pg, bc]) c.addEventListener('change', redraw);
+    for (const c of [fmt, bc, rs, oi]) c.addEventListener('change', redraw);
     const ext = () => ({ txt: 'txt', md: 'md', csv: 'csv' })[opt.fmt];
     const type = () => ({ txt: 'text/plain', md: 'text/markdown', csv: 'text/csv' })[opt.fmt] + ';charset=utf-8';
     const body = el('div', { class: 'settings' },
-      el('p', { class: 'muted small' }, `${items.length} か所（${new Set(items.map((h) => h.page)).size} ページ）。2 行にまたがって引いた所は 1 つの文にまとめています。`),
+      count,
       el('label', { class: 'field' }, '形', fmt),
-      el('label', { class: 'row' }, pg, ' ページ番号を付ける'),
-      el('label', { class: 'row' }, bc, ' 色ごとにまとめる'),
+      el('div', { class: 'row hl-seg' }, el('span', {}, '文の後のページ番号'), el('span', { class: 'seg' }, pgOn, pgOff)),
+      el('label', { class: 'row' }, bc, ' 色ごとにまとめる（赤＝重要を先に）'),
+      hasRed ? el('label', { class: 'row' }, rs, ' 赤（重要）は文全体を取り出す（前の「。」の後から次の「。」まで）') : null,
+      hasRed ? el('label', { class: 'row' }, oi, ' 赤（重要）だけ') : null,
       prev,
       blindMsg ? el('p', { class: 'muted small' }, blindMsg) : null);
     redraw();
