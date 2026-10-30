@@ -246,7 +246,7 @@ function copyPage(p, noteId) {
 /* 新しいノート（またはホワイトボード）を作って保存する */
 async function createNote({ name, parent, kind = 'paged', paper, size = 'A4', landscape = false, pages = 1 }) {
   const now = Date.now();
-  const item = { id: uid('n'), type: 'note', kind, parent: parent || 'root', name: name || (kind === 'board' ? '無限キャンバス' : '無題のノート'),
+  const item = { id: uid('n'), type: 'note', textV: TEXT_VER, kind, parent: parent || 'root', name: name || (kind === 'board' ? '無限キャンバス' : '無題のノート'),
     created: now, updated: now, trashed: false, paper: paper || { type: 'ruled', color: 'white' }, size, landscape, pageIds: [] };
   const list = [];
   for (let i = 0; i < (kind === 'board' ? 1 : Math.max(1, pages)); i++) list.push(blankPage(item, uid('p')));
@@ -258,7 +258,7 @@ async function createNote({ name, parent, kind = 'paged', paper, size = 'A4', la
 /* 出来上がったページの並びから新しいノートを作る（PDF の読み込み・結合・抽出・分割） */
 async function createNoteFromPages({ name, parent, pages, paper, size, thumb }) {
   const now = Date.now();
-  const item = { id: uid('n'), type: 'note', kind: 'paged', parent: parent || 'root', name: name || '無題のノート',
+  const item = { id: uid('n'), type: 'note', textV: TEXT_VER, kind: 'paged', parent: parent || 'root', name: name || '無題のノート',
     created: now, updated: now, trashed: false, paper: paper || { type: 'blank', color: 'white' }, size: size || 'A4', landscape: false, pageIds: [] };
   for (const p of pages) { p.noteId = item.id; p.strokes = p.strokes || []; p.images = p.images || []; }
   item.pageIds = pages.map((p) => p.id);

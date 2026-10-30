@@ -72,6 +72,7 @@ const Store = {
       for (const r of texts) { if (r.text || r.obj) st.put(r); else st.delete(r.pageId); }
     });
   },
+  async putTexts(list) { await this.tx(['texts'], 'readwrite', (s) => { for (const r of list) { if (r.text || r.obj) s.put(r); else s.delete(r.pageId); } }); },
   async getTexts(noteId) { return this.tx(['texts'], 'readonly', (s) => this.req(s.index('noteId').getAll(noteId))); },
   async allTexts() { return (await this.tx(['texts'], 'readonly', (s) => this.req(s.getAll()))) || []; },
   async putBlob(key, rec) { await this.tx(['blobs'], 'readwrite', (s) => { s.put(rec, key); }); },

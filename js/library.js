@@ -38,18 +38,24 @@ class Library {
     if (!q) { this.textHits = []; return; }
     if (!this.texts) this.texts = await Store.allTexts();
     if (q !== this.query) return;
-    const nq = normText(q).trim();
-    const byNote = new Map();
-    for (const r0 of this.texts) {
-      const r = { ...r0, text: [r0.text || '', r0.obj || ''].filter(Boolean).join('\n') };
-      if (!r.text || !normText(r.text).includes(nq)) continue;
-      const it = this.byId(r.noteId);
-      if (!it || it.trashed || this.path(it.parent).some((f) => f.trashed)) continue;
-      const idx = String(r.pageId).startsWith('rec|') ? -1 : (it.pageIds || []).indexOf(r.pageId);
-      if (idx < 0 && !String(r.pageId).startsWith('rec|')) continue;
-      const h = byNote.get(it.id) || { it, pages: [] };
-      h.pages.push({ idx, text: r.text });
-      byNote.set(it.id, h);
+    // 見つかるまで、だんだんゆるく探す（search.js。空白・改行は いつも無視）
+    let byNote = new Map();
+    for (const level of SEARCH_LEVELS) {
+      byNote = new Map();
+      for (const r of this.texts) {
+        const text = [r.text || '', r.obj || ''].filter(Boolean).join('\n');
+        const m = text && matchRanges(text, q, level, r)[0];
+        if (!m) continue;
+        const it = this.byId(r.noteId);
+        if (!it || it.trashed || this.path(it.parent).some((f) => f.trashed)) continue;
+        const idx = String(r.pageId).startsWith('rec|') ? -1 : (it.pageIds || []).indexOf(r.pageId);
+        if (idx < 0 && !String(r.pageId).startsWith('rec|')) continue;
+        const h = byNote.get(it.id) || { it, pages: [] };
+        h.pages.push({ idx, sn: snippetAt(text, m) });
+        byNote.set(it.id, h);
+      }
+      this.textLevel = level;
+      if (byNote.size) break;
     }
     this.textHits = [...byNote.values()].map((h) => { h.pages.sort((a, b) => (a.idx < 0) - (b.idx < 0) || a.idx - b.idx); return h; }).sort((a, b) => b.it.updated - a.it.updated);
     this.render();
@@ -96,9 +102,10 @@ class Library {
     }
     for (const it of list) g.append(this.card(it));
     if (this.query && this.textHits.length) {
-      g.append(el('div', { class: 'shelf-note wide' }, `ページの中の文字に「${this.query}」があるノート`));
+      g.append(el('div', { class: 'shelf-note wide' }, `ページの中の文字に「${this.query}」があるノート`,
+        SEARCH_LEVEL_NOTE[this.textLevel] ? el('div', { class: 'muted small' }, SEARCH_LEVEL_NOTE[this.textLevel]) : null));
       for (const h of this.textHits) {
-        const first = h.pages[0], sn = snippetOf(first.text, this.query) || { before: '', hit: '', after: '' };
+        const first = h.pages[0], sn = first.sn;
         const where = h.it.parent !== 'root' ? this.path(h.it.parent).map((f) => f.name).join(' › ') + ' › ' : '';
         const row = el('button', { class: 'texthit' },
           h.it.thumb ? el('img', { src: h.it.thumb, alt: '' }) : el('span', { class: 'th-blank' }),
@@ -115,6 +122,41 @@ class Library {
         g.append(row);
       }
     }
+    const old = this.query ? this.oldTextNotes() : [];
+    if (old.length) {
+      g.append(el('div', { class: 'shelf-note wide reindex' },
+        el('span', { class: 'muted small' }, `前の版で読み込んだ PDF は、文字（OCR の文字など）が抜けていることがあります（${old.length} 冊）。`),
+        el('button', { class: 'small', onclick: () => this.reindexOld() }, 'PDF の文字を読み直す')));
+    }
+  }
+  /* 前の版（TEXT_VER より前）に作ったノート。PDF が無いノートも、読み直すまでは分からないので入れる */
+  oldTextNotes() { return this.items.filter((it) => it.type === 'note' && !it.trashed && it.textV !== TEXT_VER); }
+  async reindexOld() {
+    const list = this.oldTextNotes();
+    const open = this.app.note && this.app.note.item.id;
+    const pr = progressBox('PDF の文字を読み直しています');
+    let pages = 0, notes = 0;
+    try {
+      for (let i = 0; i < list.length; i++) {
+        const it = list[i];
+        pr.set(i, list.length, it.name);
+        if (it.id === open) continue;           // 開いているノートは開いた時に読み直している
+        const recs = (await Store.getPages(it.pageIds || [])).filter(Boolean);
+        if (recs.some((r) => r.bg && !r.bg.tpl)) {
+          const old = new Map((await Store.getTexts(it.id)).map((r) => [r.pageId, r]));
+          for (const r of recs) r.text = (old.get(r.id) || {}).text || '';
+          const changed = await refreshPdfText(recs);
+          if (changed.length) {
+            await Store.putTexts(changed.map((p) => ({ pageId: p.id, noteId: it.id, text: p.text, obj: (old.get(p.id) || {}).obj || objectsText(p) })));
+            pages += changed.length; notes++;
+          }
+        }
+        it.textV = TEXT_VER;
+        await Store.putItem(it);
+      }
+    } catch (e) { toast('読み直せませんでした: ' + (e.message || e), { error: true, ms: 6000 }); } finally { pr.close(); }
+    toast(pages ? `${notes} 冊・${pages} ページの文字を読み直しました` : '読み直しました（変わった所はありませんでした）', { ms: 4000 });
+    await this.refresh();
   }
 
   renderCrumbs() {
