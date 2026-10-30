@@ -1401,7 +1401,7 @@ class App {
       bc.parentElement.hidden = opt.fmt === 'csv';
       const rows = highlightRows(items, opt), by = new Map();
       for (const h of rows) by.set(h.fam, (by.get(h.fam) || 0) + 1);
-      count.textContent = `${rows.length} か所（${[...by].map(([f, n]) => `${f === HL_IMPORTANT ? '★' + f : f} ${n}`).join('・')}）。黄・赤の上下に分かれた文は 1 つにつないでいます。`;
+      count.textContent = `${rows.length} か所（${[...by].map(([f, n]) => `${HL_IMPORTANT.has(f) ? '★' + f : f} ${n}`).join('・')}）。黄・赤・ピンクの上下に分かれた文は 1 つにつないでいます。`;
       prev.value = out();
     };
     for (const c of [fmt, bc, rs, oi]) c.addEventListener('change', redraw);
@@ -1411,9 +1411,9 @@ class App {
       count,
       el('label', { class: 'field' }, '形', fmt),
       el('div', { class: 'row hl-seg' }, el('span', {}, '文の後のページ番号'), el('span', { class: 'seg' }, pgOn, pgOff)),
-      el('label', { class: 'row' }, bc, ' 色ごとにまとめる（赤＝重要を先に）'),
-      hasRed ? el('label', { class: 'row' }, rs, ' 赤（重要）は文全体を取り出す（前の「。」の後から次の「。」まで）') : null,
-      hasRed ? el('label', { class: 'row' }, oi, ' 赤（重要）だけ') : null,
+      el('label', { class: 'row' }, bc, ' 色ごとにまとめる（赤・ピンク＝重要を先に）'),
+      hasRed ? el('label', { class: 'row' }, rs, ' 赤・ピンク（重要）は文全体を取り出す（前の「。」の後から次の「。」まで）') : null,
+      hasRed ? el('label', { class: 'row' }, oi, ' 赤・ピンク（重要）だけ') : null,
       prev,
       blindMsg ? el('p', { class: 'muted small' }, blindMsg) : null);
     redraw();
