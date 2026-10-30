@@ -38,7 +38,7 @@
     <div class="tb-left">
       <button id="btn-back" class="ghost" title="本棚へ">‹ 本棚</button>
       <button id="note-title" class="title" title="名前を変更"></button>
-      <span id="page-ind" class="muted"></span>
+      <button id="page-ind" class="ghost page-ind" title="ページ全体を一覧"></button>
       <span id="save-state" class="save-state"></span>
     </div>
     <div id="tools" class="tb-tools">
@@ -95,6 +95,7 @@
   </div>
   <aside id="pagepanel" class="pagepanel" hidden>
     <div class="pp-head"><span>ページ</span><button id="pp-marks" class="small" title="しおりのページだけ">🔖</button><button id="pp-select" class="small">選ぶ</button><button id="pp-add" class="small">＋ 最後に追加</button><button id="pp-close" class="ghost">✕</button></div>
+    <div class="pp-tabs"><button id="pp-tab-pages" class="small on">ページ</button><button id="pp-tab-toc" class="small">目次</button><button id="pp-grid" class="small" title="ページ全体を大きく一覧">⊞ 一覧</button></div>
     <div id="pp-selbar" class="pp-selbar" hidden>
       <span id="pp-selcount" class="muted"></span>
       <button data-act="pdf" class="small">PDF</button>
@@ -130,6 +131,10 @@
     <div class="pp-head"><input id="sp-input" type="search" placeholder="ノートの中の文字を検索" autocomplete="off"><button id="sp-close" class="ghost">✕</button></div>
     <div id="sp-list" class="sp-list"></div>
   </aside>
+  <div id="grid" class="grid-view" hidden>
+    <div class="grid-head"><b id="grid-title">ページ一覧</b><button id="grid-marks" class="small">🔖 しおりだけ</button><button id="grid-close" class="ghost">✕</button></div>
+    <div id="grid-list" class="grid-list"></div>
+  </div>
   <div id="badge" class="badge"></div>
 </section>
 

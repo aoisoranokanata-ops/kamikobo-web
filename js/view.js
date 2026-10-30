@@ -77,6 +77,64 @@ class NoteView {
     return { x0: Math.min(...cs.map((c) => c.x)), y0: Math.min(...cs.map((c) => c.y)), x1: Math.max(...cs.map((c) => c.x)), y1: Math.max(...cs.map((c) => c.y)) };
   }
 
+  // ---- ページの並べ方（ノートごと）: 1 ページずつ（single）か続けて、縦（v）か横（h）
+  get single() { const n = this.note; return !!(n && !n.board && this.app.layoutOf(n).single); }
+  get dirH() { const n = this.note; return !!(n && !n.board && this.app.layoutOf(n).dir === 'h'); }
+  /* i ページ目を画面いっぱい（全体が見える大きさ）で真ん中に */
+  pageFit(i) {
+    const p = this.note.pages[clamp(i, 0, this.note.pages.length - 1)], m = 14;
+    const s = clamp(Math.min((this.cssW - m * 2) / p.disp.w, (this.cssH - m * 2) / p.disp.h), 0.05, 10);
+    return { s, ox: this.cssW / 2 - (p.disp.x + p.disp.w / 2) * s, oy: this.cssH / 2 - (p.disp.y + p.disp.h / 2) * s };
+  }
+  atFit() { return this.single && this.s <= this.pageFit(this.pageI || 0).s * 1.04; }
+  /* なめらかに動かす（ページ送り） */
+  animateTo(t, ms = 230, done = null) {
+    const from = { s: this.s, ox: this.ox, oy: this.oy }, t0 = performance.now(), token = {};
+    this._anim = token;
+    const step = () => {
+      if (this._anim !== token) return;
+      const k = Math.min(1, (performance.now() - t0) / ms), e = 1 - Math.pow(1 - k, 3);
+      this.s = from.s + (t.s - from.s) * e; this.ox = from.ox + (t.ox - from.ox) * e; this.oy = from.oy + (t.oy - from.oy) * e;
+      this.invalidate();
+      if (k < 1) requestAnimationFrame(step); else { this._anim = null; this.invalidate(); if (done) done(); }
+    };
+    requestAnimationFrame(step);
+  }
+  /* 次・前のページへ（d = +1 / -1） */
+  turnPage(d) {
+    const n = this.note;
+    if (!n || n.board) return false;
+    const i = this.currentPageIndex() + d;
+    if (i < 0 || i >= n.pages.length) {
+      this.app.showBadge(i < 0 ? '最初のページです' : '最後のページです');
+      if (this.single) this.animateTo(this.pageFit(this.pageI));
+      return false;
+    }
+    this.goToPage(i, true);
+    this.app.updateStatus();
+    this.app.saveView();
+    this.app.refreshPanel();
+    return true;
+  }
+  /* 1 ページずつ: 拡大していればページの中だけ動ける、全体表示ならその位置に */
+  clampSingle() {
+    const p = this.note.pages[this.pageI || 0], s = this.s, W = p.disp.w * s, H = p.disp.h * s;
+    const L = p.disp.x * s + this.ox, T = p.disp.y * s + this.oy;
+    if (W <= this.cssW) this.ox = this.cssW / 2 - (p.disp.x + p.disp.w / 2) * s;
+    else { if (L > 0) this.ox -= L; else if (L + W < this.cssW) this.ox += this.cssW - (L + W); }
+    if (H <= this.cssH) this.oy = this.cssH / 2 - (p.disp.y + p.disp.h / 2) * s;
+    else { if (T > 0) this.oy -= T; else if (T + H < this.cssH) this.oy += this.cssH - (T + H); }
+  }
+  /* 1 ページずつ: 指で払った向きでページを送る（少しなら元の位置へ） */
+  endSwipe(G, lp) {
+    const d = this.dirH ? lp.x - G.sx : lp.y - G.sy;
+    const h = G.hist, a = h[Math.max(0, h.length - 3)], b = h[h.length - 1];
+    const vel = a && b && b[0] > a[0] ? ((this.dirH ? b[1] - a[1] : b[2] - a[2]) / (b[0] - a[0])) : 0;
+    if (d < -50 || vel < -0.6) this.turnPage(1);
+    else if (d > 50 || vel > 0.6) this.turnPage(-1);
+    else this.animateTo(this.pageFit(this.pageI));
+  }
+
   fit(redraw = true) {
     const n = this.note;
     if (!n) return;
@@ -85,6 +143,15 @@ class NoteView {
       this.s = 1;
       this.ox = this.cssW / 2; this.oy = this.cssH / 3;
       if (n.item.view) { this.s = n.item.view.s; this.ox = n.item.view.ox; this.oy = n.item.view.oy; }
+    } else if (this.single) {
+      this.pageI = clamp(this.pageI || 0, 0, n.pages.length - 1);
+      Object.assign(this, this.pageFit(this.pageI));
+    } else if (this.dirH) {
+      const margin = 24;
+      this.s = clamp((this.cssH - margin * 2) / (n.height || 842), 0.1, 4);
+      if (this.app.settings.fitPage) this.s = Math.min(this.s, (this.cssW - margin * 2) / (n.pages[0] ? n.pages[0].disp.w : 595));
+      this.oy = this.cssH / 2;
+      this.ox = margin;
     } else {
       const margin = 24;
       this.s = clamp((this.cssW - margin * 2) / (n.width || 595), 0.1, 4);
@@ -109,20 +176,25 @@ class NoteView {
     this.fitted = false;
     this.invalidate();
   }
-  goToPage(i) {
+  goToPage(i, animate = false) {
     const n = this.note;
     if (!n || n.board) return;
-    const p = n.pages[clamp(i, 0, n.pages.length - 1)];
+    const idx = clamp(i, 0, n.pages.length - 1), p = n.pages[idx];
     this.rot = 0;
-    this.oy = 16 - p.disp.y * this.s;
-    this.ox = this.cssW / 2;
-    this.fitted = false;
+    let t;
+    if (this.single) { this.pageI = idx; t = this.pageFit(idx); }
+    else if (this.dirH) t = { s: this.s, ox: 16 - p.disp.x * this.s, oy: this.cssH / 2 };
+    else t = { s: this.s, oy: 16 - p.disp.y * this.s, ox: this.cssW / 2 };
+    if (animate) this.animateTo(t);
+    else { this._anim = null; Object.assign(this, t); }
+    this.fitted = this.single;
     this.invalidate();
   }
   currentPageIndex() {
     const n = this.note;
     if (!n || n.board) return 0;
-    const P = this.toDocLocal(this.cssW / 2, this.cssH / 3);
+    if (this.single) return clamp(this.pageI || 0, 0, n.pages.length - 1);
+    const P = this.dirH ? this.toDocLocal(this.cssW / 3, this.cssH / 2) : this.toDocLocal(this.cssW / 2, this.cssH / 3);
     return n.pageIndex(n.pageAt(P.x, P.y).page);
   }
   zoomAt(k, x, y) {
@@ -130,6 +202,7 @@ class NoteView {
     this.s = clamp(this.s * k, this.note && this.note.board ? 0.05 : 0.1, 10);
     this.pin(P, { x, y });
     this.fitted = false;
+    if (this.single) { if (this.s < this.pageFit(this.pageI).s) { Object.assign(this, this.pageFit(this.pageI)); this.fitted = true; } else this.clampSingle(); }
     this.invalidate();
   }
 
@@ -177,7 +250,9 @@ class NoteView {
       return;
     }
     const midY = (vr.y0 + vr.y1) / 2;
+    const onlyCur = this.single && !this._anim && this.mode !== 'pan' && this.mode !== 'pinch' ? n.pages[this.pageI || 0] : null;
     for (const p of n.pages) {
+      if (onlyCur && p !== onlyCur) continue;
       const r = p.disp;
       if (p.bg && r.y < vr.y1 + r.h && r.y + r.h > vr.y0 - r.h) {       // 前後 1 ページも先に描いておく
         const near = r.x > vr.x1 || r.x + r.w < vr.x0 || r.y > vr.y1 || r.y + r.h < vr.y0;
@@ -260,7 +335,9 @@ class NoteView {
   onDown(e) {
     if (!this.note) return;
     this.app.closePopups();
+    this._hadMomentum = !!this.momentum || !!this._anim;
     this.momentum = null;
+    this._anim = null;
     try { this.over.setPointerCapture(e.pointerId); } catch { /* */ }
     const lp = this.local(e);
     this.pointers.set(e.pointerId, { x: lp.x, y: lp.y, type: e.pointerType });
@@ -330,7 +407,7 @@ class NoteView {
   startPan(e) {
     const lp = this.local(e);
     this.mode = 'pan';
-    this.gesture = { sx: lp.x, sy: lp.y, ox: this.ox, oy: this.oy, id: e.pointerId, moved: false, hist: [[performance.now(), lp.x, lp.y]] };
+    this.gesture = { sx: lp.x, sy: lp.y, ox: this.ox, oy: this.oy, id: e.pointerId, moved: false, hist: [[performance.now(), lp.x, lp.y]], single: this.atFit() };
   }
   startPinch() {
     const pts = [...this.pointers.values()].filter((p) => p.type === 'touch');
@@ -375,7 +452,7 @@ class NoteView {
       this.fitted = false;
       const n = this.note;
       this.s = clamp(G.s * (dist / G.dist), n && n.board ? 0.05 : 0.1, 10);
-      if (this.app.settings.rotateGesture) {
+      if (this.app.settings.rotateGesture && !this.single) {
         let r = G.rot + (ang - G.ang);
         const snap = Math.round(r / (Math.PI / 2)) * (Math.PI / 2);
         if (Math.abs(r - snap) < (5 * Math.PI) / 180) r = snap;
@@ -391,6 +468,13 @@ class NoteView {
       if (G && e.pointerId === G.id) {
         if (Math.hypot(lp.x - G.sx, lp.y - G.sy) > 6) G.moved = true;
         if (!G.moved) return;
+        if (G.single) {                 // 1 ページずつ（全体表示）: 送る向きにだけ動かす → 離した時に送る
+          if (this.dirH) this.ox = G.ox + lp.x - G.sx; else this.oy = G.oy + lp.y - G.sy;
+          G.hist.push([performance.now(), lp.x, lp.y]);
+          if (G.hist.length > 6) G.hist.shift();
+          this.invalidate();
+          return;
+        }
         this.fitted = false;
         this.ox = G.ox + lp.x - G.sx; this.oy = G.oy + lp.y - G.sy;
         G.hist.push([performance.now(), lp.x, lp.y]);
@@ -427,8 +511,9 @@ class NoteView {
       const G = this.gesture;
       if (G && e.pointerId === G.id) {
         this.mode = null; this.gesture = null;
-        if (G.moved) this.startMomentum(G.hist);
-        else { const lp = this.local(e); this.app.onTap(this.toDocLocal(lp.x, lp.y), e.pointerType); }
+        const lp = this.local(e);
+        if (G.moved) { if (G.single) this.endSwipe(G, lp); else if (!this.single) this.startMomentum(G.hist); }
+        else this.app.onTap(this.toDocLocal(lp.x, lp.y), e.pointerType, lp, this._hadMomentum);
       }
       return;
     }
@@ -444,6 +529,10 @@ class NoteView {
   endGesture(silent = false) {
     const G = this.gesture;
     this.mode = null; this.gesture = null;
+    if (this.single) {             // 小さくし過ぎたら全体表示に戻す
+      const f = this.pageFit(this.pageI);
+      if (this.s < f.s * 1.04) this.animateTo(f, 180, () => { this.fitted = true; }); else this.clampSingle();
+    }
     this.app.saveView();
     if (silent || !G || G.moved >= 12) return;
     if (performance.now() - G.t0 > 350) return;
@@ -474,6 +563,16 @@ class NoteView {
   clampScroll() {
     const n = this.note;
     if (!n || n.board || this.rot) return;
+    if (this.single) { this.clampSingle(); return; }
+    if (this.dirH) {                // 横に並べた時: 左右はノートの端まで、上下は真ん中寄り
+      const left = this.ox + (n.pages[0] ? n.pages[0].disp.x : 0) * this.s, right = left + n.width * this.s;
+      const minLeft = this.cssW * 0.6 - (right - left);
+      if (left > this.cssW * 0.4) this.ox -= left - this.cssW * 0.4;
+      if (left < minLeft) this.ox += minLeft - left;
+      const lim = Math.max(0, (n.height * this.s) / 2 - this.cssH * 0.3);
+      this.oy = clamp(this.oy, this.cssH / 2 - lim - this.cssH * 0.2, this.cssH / 2 + lim + this.cssH * 0.2);
+      return;
+    }
     const top = this.toScreen(0, 0).y, bottom = this.toScreen(0, n.height).y;
     const minTop = this.cssH * 0.6 - (bottom - top);
     if (top > this.cssH * 0.4) this.oy -= top - this.cssH * 0.4;
@@ -489,6 +588,15 @@ class NoteView {
     e.preventDefault();
     const lp = this.local(e);
     if (e.ctrlKey || e.metaKey) this.zoomAt(Math.exp(-e.deltaY * (e.deltaMode === 1 ? 0.05 : 0.0025)), lp.x, lp.y);
+    else if (this.atFit()) {        // 1 ページずつ: ホイールでページ送り
+      this._wacc = (this._wacc || 0) + (Math.abs(e.deltaX) > Math.abs(e.deltaY) ? e.deltaX : e.deltaY);
+      clearTimeout(this._wt); this._wt = setTimeout(() => { this._wacc = 0; }, 250);
+      if (!this._wlock && Math.abs(this._wacc) > 60) {
+        this.turnPage(this._wacc > 0 ? 1 : -1);
+        this._wacc = 0; this._wlock = true; setTimeout(() => { this._wlock = false; }, 450);
+      }
+      return;
+    } else if (this.dirH && !e.shiftKey && !e.deltaX) { this.ox -= e.deltaY; this.fitted = false; this.clampScroll(); this.invalidate(); }
     else { this.ox -= e.shiftKey && !e.deltaX ? e.deltaY : e.deltaX; this.oy -= e.shiftKey && !e.deltaX ? 0 : e.deltaY; this.fitted = false; this.clampScroll(); this.invalidate(); }
     this.app.saveViewSoon();
   }

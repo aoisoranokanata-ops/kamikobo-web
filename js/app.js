@@ -7,6 +7,9 @@ const DEFAULT_SETTINGS = {
   twoFinger: 'eraser',        // 2 本指タップ: 'eraser'（消しゴムに切り替え）| 'undo'
   rotateGesture: false,       // 2 本指で画面も回す
   fitPage: false,             // 画面に合わせる: ページ全体（false なら幅）
+  pageSingle: false,          // 新しく開くノートの表示: 1 ページずつ（false なら続けてスクロール）
+  pageDir: 'v',               // ページの並び: 'v' 縦 | 'h' 横
+  tapTurn: true,              // 画面の端（右・下 = 次、左・上 = 前）を指でタップしてページ送り
   shapeHold: true,            // 書いて止めると図形に整える
   transcribe: true,           // 録音しながら文字起こし（Web Speech）
 };
@@ -85,6 +88,9 @@ class App {
     this.player.close();
     this.closeRecPanel();
     this.view.resize();
+    this.note.dir = this.layoutOf(this.note).dir;
+    this.note.layout();
+    this.view.pageI = Math.min(item.lastPage || 0, this.note.pages.length - 1);
     this.view.fit(false);
     if (!this.note.board && item.lastPage) this.view.goToPage(item.lastPage);
     this.view.invalidate();
@@ -106,6 +112,7 @@ class App {
     $('#editor').hidden = true;
     $('#library').hidden = false;
     this.closePanel();
+    this.closeGrid();
     this.closeSearch();
     await this.library.refresh();
   }
@@ -171,16 +178,20 @@ class App {
   undo() {
     if (!this.note) return;
     this.tools.lasso.clear(this.view);
+    const keep = this.view.single ? this.note.pages[this.view.currentPageIndex()] : null;
     const l = this.note.undo();
     if (l) this.showBadge('元に戻す: ' + l);
+    this.keepSinglePage(keep);
     this.view.invalidate();
     this.updateStatus();
   }
   redo() {
     if (!this.note) return;
     this.tools.lasso.clear(this.view);
+    const keep = this.view.single ? this.note.pages[this.view.currentPageIndex()] : null;
     const l = this.note.redo();
     if (l) this.showBadge('やり直す: ' + l);
+    this.keepSinglePage(keep);
     this.view.invalidate();
     this.updateStatus();
   }
@@ -421,11 +432,56 @@ class App {
       { label: '用紙を変更…', fn: () => this.paperDialog() },
       { label: 'ページの一覧', fn: () => this.openPanel() },
       { label: '画面に合わせる', fn: () => this.view.fit() },
+      null,
+      ...this.layoutMenuItems(),
+      null,
+      { label: '⊞ ページ全体を一覧', fn: () => this.openGrid() },
+      { label: '☰ 目次（しおり・PDF のアウトライン）', fn: () => { this.panelTab = 'toc'; this.openPanel(); } },
     ];
     items.push(null, { label: '設定…', fn: () => this.settingsDialog() });
     popMenu(anchor, items);
   }
-  afterPageChange() { this.view.invalidate(); this.updateStatus(); this.refreshPanel(); }
+  afterPageChange() {
+    if (this.view.single) this.view.goToPage(this.view.pageI || 0);
+    this.view.invalidate(); this.updateStatus(); this.refreshPanel();
+  }
+  keepSinglePage(p) {
+    const n = this.note, v = this.view;
+    if (!p || !v.single) return;
+    const i = n.pages.indexOf(p);
+    if (i < 0) v.goToPage(Math.min(v.pageI, n.pages.length - 1));
+    else { v.pageI = i; if (v.atFit()) v.goToPage(i); else v.clampSingle(); }
+  }
+  /* ノートの表示の仕方（ノートごとに覚える。無ければ設定の既定） */
+  layoutOf(n) {
+    const L = (n && n.item.layout) || {};
+    return { single: L.single != null ? L.single : !!this.settings.pageSingle, dir: L.dir || this.settings.pageDir || 'v' };
+  }
+  setLayout(patch) {
+    const n = this.note;
+    if (!n || n.board) return;
+    const i = this.view.currentPageIndex();
+    n.item.layout = { ...this.layoutOf(n), ...patch };
+    n.itemDirty = true;
+    n.dir = n.item.layout.dir;
+    n.layout();
+    this.view.pageI = i;
+    this.view.fit(false);
+    this.view.goToPage(i);
+    this.updateStatus(); this.refreshPanel(); this.saveSoon();
+    const L = n.item.layout;
+    this.showBadge(`${L.single ? '1 ページずつ' : '続けてスクロール'}・${L.dir === 'h' ? '横' : '縦'}`);
+    if (L.single && this.settings.tapTurn) toast(`ページ送り: ${L.dir === 'h' ? '左右' : '上下'}に払う、または画面の右・下の端をタップ（前へは左・上の端）`, { ms: 4200 });
+  }
+  layoutMenuItems() {
+    const L = this.layoutOf(this.note), ck = (b) => (b ? '✓ ' : '　 ');
+    return [
+      { label: ck(L.single) + '1 ページずつ（画面に合わせて固定）', fn: () => this.setLayout({ single: true }) },
+      { label: ck(!L.single) + '続けてスクロール', fn: () => this.setLayout({ single: false }) },
+      { label: ck(L.dir === 'v') + '縦に並べる', fn: () => this.setLayout({ dir: 'v' }) },
+      { label: ck(L.dir === 'h') + '横に並べる', fn: () => this.setLayout({ dir: 'h' }) },
+    ];
+  }
   async deletePage(p) {
     const n = this.note;
     if (n.pages.length <= 1) { toast('ページは 1 枚以上必要です', { error: true }); return; }
@@ -442,6 +498,11 @@ class App {
     if (!panel || panel.hidden || !this.note) return;
     const list = $('#pp-list');
     list.innerHTML = '';
+    const toc = this.panelTab === 'toc';
+    $('#pp-tab-pages').classList.toggle('on', !toc);
+    $('#pp-tab-toc').classList.toggle('on', toc);
+    for (const id of ['#pp-marks', '#pp-select', '#pp-add']) $(id).hidden = toc;
+    if (toc) { $('#pp-selbar').hidden = true; this.renderToc(list); return; }
     const n = this.note, cur = this.view.currentPageIndex(), sel = this.panelSel;
     $('#pp-select').textContent = sel ? '完了' : '選ぶ';
     $('#pp-selbar').hidden = !sel;
@@ -477,6 +538,70 @@ class App {
       list.append(row);
     });
   }
+  /* 目次: しおり（自分で付けた見出し）と、読み込んだ PDF のアウトライン（PDF の目次） */
+  renderToc(list) {
+    const n = this.note, cur = this.view.currentPageIndex();
+    const go = (i) => { this.view.goToPage(i, true); this.updateStatus(); this.refreshPanel(); };
+    list.append(el('div', { class: 'toc-h' }, '🔖 しおり'));
+    const marks = n.pages.map((p, i) => [p, i]).filter(([p]) => p.mark);
+    if (!marks.length) list.append(el('div', { class: 'toc-hint muted small' }, 'ページに 🔖 を付けると、ここに目次として並びます（名前も変えられます）。PDF に書き出すと PDF の目次にもなります。'));
+    for (const [p, i] of marks) {
+      list.append(el('div', { class: 'toc-row' + (i === cur ? ' on' : '') },
+        el('button', { class: 'toc-go', onclick: () => go(i) }, el('span', { class: 'toc-t' }, p.mark.title || 'しおり'), el('span', { class: 'toc-p' }, `p.${i + 1}`)),
+        el('button', { class: 'ghost small', title: '名前を変える', onclick: () => this.renderMarkEdit(p) }, '✎'),
+        el('button', { class: 'ghost small', title: 'しおりを外す', onclick: () => { this.toggleMark(p); } }, '✕')));
+    }
+    const srcs = [...new Set(n.pages.filter((p) => p.bg && !p.bg.tpl).map((p) => p.bg.src))];
+    if (!srcs.length) return;
+    list.append(el('div', { class: 'toc-h' }, '📄 PDF の目次（アウトライン）'));
+    for (const src of srcs) {
+      const box = el('div', {}, el('div', { class: 'toc-hint muted small' }, '読み込んでいます…'));
+      list.append(box);
+      PdfOutline.get(src).then((items) => {
+        box.innerHTML = '';
+        if (!items.length) { box.append(el('div', { class: 'toc-hint muted small' }, 'この PDF には目次（アウトライン）がありません。')); return; }
+        for (const it of items) {
+          const i = it.page == null ? -1 : n.pages.findIndex((p) => p.bg && p.bg.src === src && p.bg.page === it.page);
+          const row = el('button', { class: 'toc-go toc-ol' + (i === cur ? ' on' : ''), disabled: i < 0, style: { paddingLeft: 8 + it.depth * 14 + 'px' },
+            onclick: () => go(i) }, el('span', { class: 'toc-t' }, it.title || '（無題）'), el('span', { class: 'toc-p' }, i >= 0 ? `p.${i + 1}` : ''));
+          box.append(row);
+        }
+      }).catch(() => { box.innerHTML = ''; box.append(el('div', { class: 'toc-hint muted small' }, 'PDF の目次を読めませんでした。')); });
+    }
+  }
+  async renderMarkEdit(p) { await this.renameMark(p); this.refreshPanel(); }
+
+  /* ページ全体を大きな一覧で（タップでそのページへ） */
+  openGrid() {
+    const n = this.note;
+    if (!n || n.board) return;
+    const box = $('#grid'), list = $('#grid-list');
+    box.hidden = false;
+    list.innerHTML = '';
+    const cur = this.view.currentPageIndex(), only = !!this.gridMarks;
+    $('#grid-marks').classList.toggle('on', only);
+    $('#grid-title').textContent = `${n.item.name}（${n.pages.length} ページ）`;
+    if (this._gridObs) this._gridObs.disconnect();
+    this._gridObs = new IntersectionObserver((ents) => {
+      for (const e of ents) {
+        if (!e.isIntersecting || e.target.dataset.done) continue;
+        e.target.dataset.done = '1';
+        const p = n.pages.find((q) => q.id === e.target.dataset.pid);
+        if (p) this.thumbAsync(p, 220).then((u) => { e.target.src = u; });
+      }
+    }, { root: list, rootMargin: '400px' });
+    n.pages.forEach((p, i) => {
+      if (only && !p.mark) return;
+      const img = el('img', { alt: '', 'data-pid': p.id, style: { aspectRatio: `${p.disp.w} / ${p.disp.h}` } });
+      this._gridObs.observe(img);
+      const cell = el('button', { class: 'grid-cell' + (i === cur ? ' on' : '') }, img,
+        el('span', { class: 'grid-no' }, String(i + 1)), p.mark ? el('span', { class: 'grid-mark' }, '🔖 ' + (p.mark.title || '')) : null);
+      cell.addEventListener('click', () => { this.closeGrid(); this.view.goToPage(i); this.updateStatus(); this.saveView(); });
+      list.append(cell);
+      if (i === cur) setTimeout(() => cell.scrollIntoView({ block: 'center' }), 30);
+    });
+  }
+  closeGrid() { const g = $('#grid'); if (g) g.hidden = true; if (this._gridObs) this._gridObs.disconnect(); }
   selectedPages() { const s = this.panelSel; return s ? this.note.pages.filter((p) => s.has(p.id)) : []; }
   async panelAction(kind) {
     const n = this.note, pages = this.selectedPages();
@@ -718,7 +843,7 @@ class App {
         normText(o.kind === 'text' ? o.text : stampText(o)).includes(normText(q).trim())).map((o) => imageCorners(o).flat()));
       this.searchMarks = new Map([[p.id, polys]]);
       // 当たった所が見えるように
-      if (polys.length) {
+      if (polys.length && !this.view.single) {
         const pm = n.pageMatrix(p), q0 = polys[0], V = this.view;
         const cx = (q0[0] + q0[4]) / 2, cy = (q0[1] + q0[5]) / 2;
         const sp = V.toScreen(pm.a * cx + pm.c * cy + pm.e, pm.b * cx + pm.d * cy + pm.f);
@@ -964,6 +1089,10 @@ class App {
       el('label', { class: 'field' }, '2 本指でタップ', sel('twoFinger', [['eraser', '消しゴムに切り替え（もう一度で戻る）／3本指で元に戻す'], ['undo', '元に戻す／3本指でやり直す']])),
       chk('rotateGesture', '2 本指で画面も回す'),
       chk('fitPage', '「画面に合わせる」でページ全体を表示（オフ = 幅に合わせる）'),
+      chk('tapTurn', '画面の端を指でタップしてページ送り（右・下 = 次、左・上 = 前）'),
+      el('label', { class: 'field' }, 'ノートの表示（既定。ノートごとに ⋯ で変えられます）',
+        sel('pageSingle', [[false, '続けてスクロール'], [true, '1 ページずつ（画面に合わせて固定）']])),
+      el('label', { class: 'field' }, 'ページの並び（既定）', sel('pageDir', [['v', '縦'], ['h', '横']])),
       el('div', { class: 'field' }, 'バックアップ',
         el('div', { class: 'row-buttons' },
           el('button', { onclick: () => this.backupAll() }, '本棚をまるごと書き出す（.kmkw）'),
@@ -1049,7 +1178,7 @@ class App {
     this._badgeT = setTimeout(() => b.classList.remove('show'), 900);
   }
   closePopups() { closePopMenus(); }
-  onTap(P, type) {
+  onTap(P, type, sp = null, moving = false) {
     const n = this.note;
     if (!n) return;
     const hit = n.pageAt(P.x, P.y, 0);
@@ -1060,7 +1189,11 @@ class App {
       if (link) { this.followLink(link); return; }
       if (this.zoomWin.open && !n.board && this.zoomWin.moveTo(hit.page, q)) return;
     }
-    if (this.tools.lasso.sel) this.tools.lasso.clear(this.view);
+    if (this.tools.lasso.sel) { this.tools.lasso.clear(this.view); return; }
+    if (n.board || !sp || moving || this.settings.tapTurn === false || this.tools.text.edit) return;
+    const x = sp.x / this.view.cssW, y = sp.y / this.view.cssH;
+    if (x > 0.8 || y > 0.85) this.view.turnPage(1);
+    else if (x < 0.2 || y < 0.12) this.view.turnPage(-1);
   }
   async followLink(link) {
     const n = this.note, to = link.to || {};
@@ -1278,6 +1411,12 @@ class App {
     $('#sp-input').addEventListener('input', runSoon);
     $('#sp-input').addEventListener('keydown', (e) => { if (e.key === 'Enter' && this._hits && this._hits.length) this.showHit(this._hits[0], $('#sp-input').value.trim()); });
     $('#pp-select').addEventListener('click', () => { this.panelSel = this.panelSel ? null : new Set(); this.refreshPanel(); });
+    $('#pp-tab-pages').addEventListener('click', () => { this.panelTab = 'pages'; this.refreshPanel(); });
+    $('#pp-tab-toc').addEventListener('click', () => { this.panelTab = 'toc'; this.panelSel = null; this.refreshPanel(); });
+    $('#pp-grid').addEventListener('click', () => { this.closePanel(); this.openGrid(); });
+    $('#page-ind').addEventListener('click', () => this.openGrid());
+    $('#grid-close').addEventListener('click', () => this.closeGrid());
+    $('#grid-marks').addEventListener('click', () => { this.gridMarks = !this.gridMarks; this.openGrid(); });
     for (const b of $$('#pp-selbar [data-act]')) b.addEventListener('click', () => this.panelAction(b.dataset.act));
     $('#pp-close').addEventListener('click', () => this.closePanel());
     $('#pp-add').addEventListener('click', () => { const n = this.note; n.addPage(n.pages.length); this.afterPageChange(); this.view.goToPage(n.pages.length - 1); });
@@ -1311,6 +1450,8 @@ class App {
       if (mod) return;
       const map = { p: 'pen', h: 'hl', e: 'eraser', l: 'lasso', ' ': 'hand', t: 'text', k: 'laser', s: 'shape' };
       if (k === 'r') { e.preventDefault(); this.view.ruler.show(); this.renderQuick(); return; }
+      if (!this.tools.lasso.sel && ['arrowright', 'arrowdown', 'pagedown'].includes(k)) { e.preventDefault(); this.view.turnPage(1); return; }
+      if (!this.tools.lasso.sel && ['arrowleft', 'arrowup', 'pageup'].includes(k)) { e.preventDefault(); this.view.turnPage(-1); return; }
       if (k === 'b') { e.preventDefault(); this.toggleMark(); return; }
       if (map[k]) { e.preventDefault(); this.setTool(map[k]); }
     });
