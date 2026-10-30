@@ -37,6 +37,7 @@ class App {
     this.recorder = new Recorder(this);
     this.player = new Player(this);
     this.library = new Library(this);
+    this.timer = new Timer();
     this.saveSoon = debounce(() => this.saveNote(), 700);
     this.saveViewSoon = debounce(() => this.saveView(), 600);
     this.searchMarks = null;          // ページ id → 当たった所の四角形（検索）

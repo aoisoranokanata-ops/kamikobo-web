@@ -105,6 +105,14 @@ GoodNotes 相当（を超える）を目標にした、ブラウザで動く日�
 - 保存先はマイドライブの「紙工房 Web」フォルダ（id を覚える）。アップロードは resumable（XHR で進み具合）、だめなら multipart。
   Google ドキュメント等は export で PDF。sw.js は ./ と index.html だけを index.html として覚える（oauth.html を混ぜない）。
 
+## 1.3 タイマー（js/timer.js）
+- `Timer`（app.timer）。モード: timer（残り・予鈴 warns・超過 overtime・+1/+5 分）、stopwatch（laps）、pomodoro（phase work/short/long・round・auto）。
+  一度に動くのは 1 つ（`run`、localStorage `timer-run`）。時刻は壁時計（acc ＋ 今 − startAt）なので読み込み直しても続く。設定は `timer`、今日の 🍅 は `pomo-log`。
+- 表示: 札 `.tm-chip`（ドラッグで動く・位置は conf.chip、タップで小窓、▶/⏸）。小窓は自前の modal-back（中身は live() で毎回書き換え）。
+  終わりは `.tm-alarm`（z-index 500、closeModals では消えない）。ポモドーロの自動で次へは短く鳴らしてトーストだけ。
+- 音は Web Audio で合成（ベル・電子音・やさしい音、音のファイル無し）。iPad はタップの中で AudioContext を起こす（スタート・タイマーがある間のタップ）。
+  閉じている間は JS が止まる → Wake Lock で画面を消さない。戻って 5 秒より遅れていたら 1 回だけ鳴らして「◯分前に終わっていました」。
+
 ## フェーズ
 1. **基盤**（済）: 本棚（フォルダ・サブフォルダ・移動・名前・色・ゴミ箱・並べ替え・題名検索）・ノート（用紙テンプレート・大きさ・向き・紙の色）・
    無限キャンバス・ペン 3 種＋蛍光ペン・消しゴム 2 種・なげなわ・ページの追加/削除/並べ替え/回転・ジェスチャー・Pencil 優先・自動保存・PWA
