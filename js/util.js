@@ -1,7 +1,7 @@
 'use strict';
 /* 共通の小道具: 版・DOM・トースト・ダイアログ・数値。 */
 
-const APP_VERSION = '1.1.0';
+const APP_VERSION = '1.2.0';
 const LS = 'kamikobo-web.';
 
 const $ = (sel, root = document) => root.querySelector(sel);
@@ -77,7 +77,7 @@ function modal(title, body, buttons, opt = {}) {
     back.addEventListener('pointerdown', (e) => { if (e.target === back && !opt.sticky) close(null); });
     document.body.append(back);
     const first = box.querySelector('input,textarea,select');
-    if (first) setTimeout(() => { first.focus(); if (first.select) first.select(); }, 30);
+    if (first && !opt.noFocus) setTimeout(() => { first.focus(); if (first.select) first.select(); }, 30);
     box.addEventListener('keydown', (e) => {
       if (e.key === 'Escape') close(null);
       if (e.key === 'Enter' && e.target.tagName === 'INPUT') { const p = buttons.find((b) => b.primary); if (p) row.children[buttons.indexOf(p)].click(); }

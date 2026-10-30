@@ -96,6 +96,15 @@ GoodNotes 相当（を超える）を目標にした、ブラウザで動く日�
   「⋯」からスクリーンショット（コピー・共有・このページに画像で貼る）・太く/細く・最前面/最背面・リンク。
 - 定規: 横・縦・45°・−45° のボタンと、定規の上の回すつまみ（↻）。
 
+## 1.2 Google Drive（js/gdrive.js・oauth.html）
+- ライブラリ（gapi・GIS）は使わず、OAuth 2.0 のトークンだけの流れ（response_type=token）＋ Drive REST v3 を fetch で直接。
+  クライアント ID は利用者が作って設定に貼る（localStorage `gdrive`。`GDRIVE_CLIENT_ID` に書けば全端末共通）。権限は drive.file ＋ drive.readonly。
+- サインイン: Safari のタブ＝小窓（oauth.html が localStorage `gdrive-token` に置き、本体は 0.5 秒ごとに見る。opener は COOP で切れることがあるので頼らない）。
+  ホーム画面アプリ・小窓が開けない時＝ページごと移る → oauth.html → `./` → 起動時の `GDrive.resume` が続きをする（`gdrive-auth.resume`、送りかけのファイルは blobs `tmp|gdrive`）。
+  state を照らし合わせる。トークンは 1 時間（login_hint で次はほぼ 1 タップ）。小窓はクリックの中でしか開けないので `GDrive.go` は await の前に呼ぶ。
+- 保存先はマイドライブの「紙工房 Web」フォルダ（id を覚える）。アップロードは resumable（XHR で進み具合）、だめなら multipart。
+  Google ドキュメント等は export で PDF。sw.js は ./ と index.html だけを index.html として覚える（oauth.html を混ぜない）。
+
 ## フェーズ
 1. **基盤**（済）: 本棚（フォルダ・サブフォルダ・移動・名前・色・ゴミ箱・並べ替え・題名検索）・ノート（用紙テンプレート・大きさ・向き・紙の色）・
    無限キャンバス・ペン 3 種＋蛍光ペン・消しゴム 2 種・なげなわ・ページの追加/削除/並べ替え/回転・ジェスチャー・Pencil 優先・自動保存・PWA

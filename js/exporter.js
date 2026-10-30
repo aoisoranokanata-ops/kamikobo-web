@@ -362,11 +362,13 @@ async function offerFile(blob, filename, title = '書き出しました') {
   const v = await modal(title, el('p', {}, `${filename}（${size}）`), [
     { label: '閉じる', value: null },
     { label: '保存', value: 'save' },
+    GDrive.configured() ? { label: '☁️ Google Drive', value: 'gdrive' } : null,
     canShare ? { label: '共有…（AirDrop・ファイル）', primary: true, value: 'share' } : null,
   ].filter(Boolean));
   if (v === 'share') {
     try { await navigator.share({ files: [file], title: filename }); } catch (e) { if (e && e.name !== 'AbortError') downloadBlob(blob, filename); }
   } else if (v === 'save') downloadBlob(blob, filename);
+  else if (v === 'gdrive') await GDrive.go(app, { kind: 'upload', blob, name: filename });
 }
 function downloadBlob(blob, filename) {
   const a = el('a', { href: URL.createObjectURL(blob), download: filename });

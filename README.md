@@ -47,5 +47,12 @@ iPad（Apple Pencil）で使う、日本語の手書きノート・PDF 書き込
 - なげなわ: 選ぶ物の絞り込み・タップで選ぶ・四隅で拡大縮小・スクリーンショット・太さ・重なり順
 - 定規: 横・縦・45° のボタン、回すつまみ
 
+## 1.2
+- Google Drive: 本棚まるごとのバックアップ・バックアップからの復元、ドライブの PDF・画像・.kmkw・Google ドキュメント（PDF にして）の読み込み、
+  書き出した PDF などを「☁️ Google Drive」ボタンで保存。保存先はマイドライブの「紙工房 Web」フォルダ
+- 使う前に 1 回だけ: Google Cloud で OAuth クライアント ID（ウェブ アプリケーション）を作り、⚙ 設定 → Google Drive に貼る（手順は画面に出ます）
+  - 承認済みの JavaScript 生成元: `https://aoisoranokanata-ops.github.io`
+  - 承認済みのリダイレクト URI: `https://aoisoranokanata-ops.github.io/kamikobo-web/oauth.html`
+
 ## iPad での使い方
 Safari で上のアドレスを開き、共有ボタン →「ホーム画面に追加」。

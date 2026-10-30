@@ -76,6 +76,7 @@ const Store = {
   async allTexts() { return (await this.tx(['texts'], 'readonly', (s) => this.req(s.getAll()))) || []; },
   async putBlob(key, rec) { await this.tx(['blobs'], 'readwrite', (s) => { s.put(rec, key); }); },
   async getBlob(key) { return this.tx(['blobs'], 'readonly', (s) => this.req(s.get(key))); },
+  async delBlob(key) { await this.tx(['blobs'], 'readwrite', (s) => { s.delete(key); }); },
   async hasBlob(key) { return !!(await this.tx(['blobs'], 'readonly', (s) => this.req(s.getKey(key)))); },
   /* どのページからも使われていない PDF・画像を消す */
   async gcBlobs() {
