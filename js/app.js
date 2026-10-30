@@ -11,7 +11,8 @@ const DEFAULT_SETTINGS = {
   pageDir: 'v',               // ページの並び: 'v' 縦 | 'h' 横
   tapTurn: true,              // 画面の端（右・下 = 次、左・上 = 前）を指でタップしてページ送り
   shapeHold: true,            // 書いて止めると図形に整える
-  transcribe: true,           // 録音しながら文字起こし（Web Speech）
+  transcribe: true,           // 録音しながら文字起こし（Web Speech）。1.6 からは recMode（無ければこれで決める）
+  recMode: null,              // 'both' | 'audio' | 'text'（REC_MODES）
 };
 
 const DEFAULT_TOOLS = {
@@ -1261,15 +1262,18 @@ class App {
   bindRec() {
     const R = this.recorder, P = this.player;
     $('#btn-rec').addEventListener('click', (e) => {
+      if (R.state === 'stopping') return;
       if (R.active) { popMenu(e.currentTarget, [
-        { label: R.state === 'paused' ? '▶ 録音を続ける' : '⏸ 一時停止', fn: () => (R.state === 'paused' ? R.resume() : R.pause()) },
-        { label: '■ 録音を止めて保存', fn: () => R.stop() }]); return; }
+        { label: R.state === 'paused' ? '▶ 続ける' : '⏸ 一時停止', fn: () => (R.state === 'paused' ? R.resume() : R.pause()) },
+        { label: '■ 止めて保存', fn: () => R.stop() }]); return; }
       const recs = (this.note && this.note.item.recordings) || [];
+      const mode = this.recMode();
       popMenu(e.currentTarget, [
-        { label: '● 録音を始める', fn: () => R.start() },
-        { label: (this.settings.transcribe ? '✓ ' : '　 ') + '録音しながら文字起こし', fn: () => { this.settings.transcribe = !this.settings.transcribe; this.saveSettings(); } },
+        { label: mode === 'text' ? '● 文字起こしを始める' : '● 録音を始める', fn: () => R.start() },
         null,
-        { label: `録音の一覧（${recs.length}）`, fn: () => this.openRecPanel() },
+        ...Object.entries(REC_MODES).map(([k, label]) => ({ label: (mode === k ? '✓ ' : '　 ') + label, fn: () => { this.settings.recMode = k; this.saveSettings(); } })),
+        null,
+        { label: `録音・文字起こしの一覧（${recs.length}）`, fn: () => this.openRecPanel() },
       ]);
     });
     $('#rb-pause').addEventListener('click', () => (R.state === 'paused' ? R.resume() : R.pause()));
@@ -1285,17 +1289,76 @@ class App {
     const seek = $('#pb-seek');
     seek.addEventListener('input', () => { const d = this.recDur(); if (d) P.seek((seek.value / 1000) * d); });
   }
+  recMode() { const s = this.settings; return REC_MODES[s.recMode] ? s.recMode : s.transcribe === false ? 'audio' : 'both'; }
   recDur() { const P = this.player; if (!P.rec) return 0; const a = P.audio; return a && isFinite(a.duration) && a.duration > 0 ? a.duration * 1000 : P.rec.dur || 0; }
   showRecBar() { $('#recbar').hidden = false; $('#btn-rec').classList.add('rec-on'); this.updateRecBar(); }
   hideRecBar() { $('#recbar').hidden = true; $('#btn-rec').classList.remove('rec-on'); }
   updateRecBar() {
     const R = this.recorder;
-    if (!R.active) return;
-    $('#rb-time').textContent = fmtClock(R.pos());
+    if (!R.active || !R.rec) return;
+    const stopping = R.state === 'stopping';
+    $('#rb-time').textContent = fmtClock(stopping ? R.rec.dur : R.pos());
     $('#rb-pause').textContent = R.state === 'paused' ? '続ける' : '一時停止';
-    $('#recbar').classList.toggle('paused', R.state === 'paused');
+    $('#rb-pause').disabled = stopping;
+    $('#rb-stop').disabled = stopping;
+    $('#rb-stop').textContent = stopping ? '保存しています…' : '停止';
+    $('#recbar').classList.toggle('paused', R.state !== 'recording');
     const tr = R.rec.transcript, last = tr.length ? tr[tr.length - 1].text : '';
-    $('#rb-text').textContent = R.interim || last || (this.settings.transcribe && SpeechRec ? '（話すと文字になります）' : '');
+    const t = $('#rb-text');
+    const err = !R.interim && R.recogErr;
+    t.textContent = R.interim || err || last || (R.wantText ? '（話すと文字になります）' : '（録音だけ）');
+    t.classList.toggle('err', !!err);
+    t.title = R.recogErr || '';
+  }
+  /* 止めた後: 文字起こしをノートに貼る・テキストで保存 */
+  async afterRecording(rec) {
+    const tr = rec.transcript || [];
+    const prev = el('div', { class: 'rec-prev' }, ...tr.slice(0, 8).map((x) => el('div', {}, el('span', { class: 'muted' }, fmtClock(x.t) + '  '), x.text)),
+      tr.length > 8 ? el('div', { class: 'muted' }, `…ほか ${tr.length - 8} 件`) : null);
+    const v = await modal(`文字起こし（${tr.length} 件）`, el('div', {}, prev,
+      el('p', { class: 'muted small' }, 'あとからでも 🎙 →「録音・文字起こしの一覧」で貼る・保存できます。ノートに貼った文字は検索できます。')), [
+      { label: '閉じる', value: null },
+      { label: '📄 テキストで保存', value: 'txt' },
+      { label: '📝 ノートに貼る', primary: true, value: 'paste' },
+    ], { wide: true });
+    if (v === 'txt') await this.exportTranscript(rec);
+    else if (v === 'paste') this.pasteTranscript(rec);
+  }
+  exportTranscript(rec) { return offerFile(new Blob([transcriptText(rec) + '\n'], { type: 'text/plain;charset=utf-8' }), `${safeName(rec.name)}.txt`, '文字起こし'); }
+  /* 文字起こしを文字（文字の道具と同じ物）にして貼る: ページのノートは今のページの後ろに新しいページを足す（長ければ何ページにも）、
+     無限キャンバスは見ている所に */
+  pasteTranscript(rec) {
+    const n = this.note;
+    if (!n || !(rec.transcript || []).length) return;
+    const head = `🎙 ${rec.name}（${fmtDate(rec.created)}・${fmtClock(rec.dur)}）`;
+    const lines = transcriptText(rec, false).split('\n');
+    const mk = (text, w) => fitTextHeight({ id: uid('m'), kind: 'text', x: 0, y: 0, w, h: 10, rot: 0, text, size: 12, color: '#1d1d1f', font: 'gothic', bold: false, bg: null });
+    if (n.board) {
+      this.placeObject((x, y) => { const o = mk([head, ...lines].join('\n'), 420); o.x = x - o.w / 2; o.y = y - Math.min(o.h, 300) / 2; return o; });
+      toast('文字起こしを貼りました');
+      return;
+    }
+    const cur = this.currentPage(), M = 48, W = cur.w - M * 2, maxH = cur.h - M * 2;
+    const chunks = [];
+    let buf = [head, ''];
+    for (const ln of lines) {
+      if (buf.length > 2 && mk([...buf, ln].join('\n'), W).h > maxH) { chunks.push(buf); buf = []; }
+      buf.push(ln);
+    }
+    chunks.push(buf);
+    const pages = chunks.map((c) => {
+      const p = blankPage(n.item, uid('p'), cur);
+      p.rot = 0; delete p.bg;
+      const o = mk(c.join('\n'), W); o.x = M; o.y = M;
+      p.images = [o];
+      return p;
+    });
+    const at = n.pageIndex(cur) + 1;
+    n.insertPages(at, pages, '文字起こしを貼る');
+    this.afterPageChange();
+    this.view.goToPage(at);
+    this.updateStatus();
+    toast(`文字起こしを ${pages.length} ページに貼りました（元に戻すで取り消せます）`);
   }
   showPlayBar() { $('#playbar').hidden = false; this.updatePlayBar(); }
   hidePlayBar() { $('#playbar').hidden = true; }
@@ -1318,7 +1381,7 @@ class App {
     if (!panel || panel.hidden || !this.note) return;
     const list = $('#rp-list'), item = this.note.item, recs = (item.recordings || []).slice().sort((a, b) => b.created - a.created);
     list.innerHTML = '';
-    if (!recs.length) list.append(el('div', { class: 'sp-hint muted' }, '録音はまだありません。「● 録音する」で始めると、書いた線と音声がつながり、あとで線を光らせながら聞き直せます。'));
+    if (!recs.length) list.append(el('div', { class: 'sp-hint muted' }, '録音はまだありません。「● 始める」で録音すると、書いた線と音声がつながり、あとで線を光らせながら聞き直せます。iPad で文字起こしが動かない時は、🎙 で「文字起こしだけ」を選ぶと確実です。'));
     for (const r of recs) {
       const tr = el('div', { class: 'rp-tr' });
       for (const seg of r.transcript || []) {
@@ -1328,9 +1391,12 @@ class App {
       }
       list.append(el('div', { class: 'rp-item' },
         el('div', { class: 'rp-head' },
-          el('button', { class: 'pb-play small', title: '再生', onclick: () => this.player.play(r, 0) }, '▶'),
-          el('div', { class: 'rp-meta' }, el('b', {}, r.name), el('span', { class: 'muted small' }, `${fmtDate(r.created)}・${fmtClock(r.dur)}${(r.transcript || []).length ? '・文字起こしあり' : ''}`)),
+          el('button', { class: 'pb-play small', title: r.src ? '再生' : '音声はありません（文字起こしだけ）', disabled: !r.src, onclick: () => this.player.play(r, 0) }, r.src ? '▶' : '📝'),
+          el('div', { class: 'rp-meta' }, el('b', {}, r.name), el('span', { class: 'muted small' }, `${fmtDate(r.created)}・${fmtClock(r.dur)}${(r.transcript || []).length ? `・文字起こし ${r.transcript.length} 件` : ''}${r.src ? '' : '・音声なし'}`)),
           el('button', { class: 'ghost small', title: 'その他', onclick: (e) => this.recMenu(r, e.currentTarget) }, '⋯')),
+        (r.transcript || []).length ? el('div', { class: 'rp-acts' },
+          el('button', { class: 'small', onclick: () => this.pasteTranscript(r) }, '📝 ノートに貼る'),
+          el('button', { class: 'small', onclick: () => this.exportTranscript(r) }, '📄 テキストで保存')) : null,
         tr));
     }
   }
@@ -1339,13 +1405,14 @@ class App {
     const save = async () => { item.updated = Date.now(); await Store.saveNote(item, [], [], recTextRecs(item)); this.refreshRecPanel(); };
     popMenu(anchor, [
       { label: '名前を変える', fn: async () => { const nm = await askText('録音の名前', r.name); if (nm) { r.name = nm; await save(); } } },
-      { label: '音声を書き出す・共有', fn: async () => {
+      { label: '音声を書き出す・共有', disabled: !r.src, fn: async () => {
         const v = await Src.get(r.src).catch(() => null);
         if (!v) { toast('録音のデータが見つかりません', { error: true }); return; }
         const ext = /webm/.test(v.type) ? 'webm' : /ogg/.test(v.type) ? 'ogg' : 'm4a';
         await offerFile(new Blob([v.data], { type: v.type }), `${safeName(r.name)}.${ext}`);
       } },
-      { label: '文字起こしを書き出す（テキスト）', disabled: !(r.transcript || []).length, fn: () => offerFile(new Blob([(r.transcript || []).map((x) => `[${fmtClock(x.t)}] ${x.text}`).join('\n')], { type: 'text/plain' }), `${safeName(r.name)}.txt`) },
+      { label: '📄 文字起こしをテキストで保存', disabled: !(r.transcript || []).length, fn: () => this.exportTranscript(r) },
+      { label: '📝 文字起こしをノートに貼る', disabled: !(r.transcript || []).length, fn: () => this.pasteTranscript(r) },
       null,
       { label: '削除', danger: true, fn: async () => {
         if (!await confirmBox('録音を削除', `「${r.name}」を削除します（書いた線は残ります）。`, '削除', true)) return;

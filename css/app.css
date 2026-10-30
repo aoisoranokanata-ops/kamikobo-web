@@ -347,3 +347,9 @@ label.row.tm-warn { margin: 0 10px 0 0; }
 
 /* ---- 1.5 検索 */
 .shelf-note.reindex { display: flex; gap: 10px; align-items: center; justify-content: center; flex-wrap: wrap; font-weight: 400; }
+
+/* ---- 1.6 録音・文字起こし */
+.rb-text.err { color: #ffb36b; }
+#rb-stop:disabled { opacity: .8; }
+.rp-acts { display: flex; gap: 6px; flex-wrap: wrap; margin: 6px 0 2px; }
+.rec-prev { display: flex; flex-direction: column; gap: 4px; max-height: 40vh; overflow-y: auto; background: #1b1c20; border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; font-size: 14px; }
