@@ -86,15 +86,18 @@ async function collectHighlights(pages, onProgress) {
     const last = (sp) => { let i = sp.b - 1; while (i >= sp.a && !at.has(i)) i--; return at.get(i); };
     const otherLine = (c1, c2) => { const th = Math.max(c1.th, c2.th); return c1.v ? Math.abs(c1.x - c2.x) > th * 0.6 : Math.abs(c1.y - c2.y) > th * 0.6; };
     const nextLine = (p, q) => { const c1 = last(p), c2 = first(q); return !!(c1 && c2 && otherLine(c1, c2)); };
-    /* i の字の行の始め・終わり（文の終わりが見つからない時に、文全体をそこまで広げる） */
-    const lineEdge = (i, dir) => {
-      const c0 = at.get(i);
-      let e = i;
+    /* i の字の段落（行の間隔・字の大きさがそろって続く所）の始め・終わり。文の終わりが見つからない時に、文全体をそこまで広げる。
+       行の間が行の高さの 1.9 倍より空く・字の大きさが 3/4〜4/3 から外れる所（柱・ページ番号・見出し）で止まる */
+    const blockEdge = (i, dir) => {
+      let c0 = at.get(i), e = i;
       for (let k = i + dir; c0 && k >= 0 && k < joined.length && Math.abs(k - i) <= 120; k += dir) {
         const c = at.get(k);
         if (!c) continue;
-        if (otherLine(c0, c)) break;
-        e = k;
+        if (otherLine(c0, c)) {
+          const step = c0.v ? Math.abs(c0.x - c.x) : Math.abs(c0.y - c.y), r = c.th / c0.th;
+          if (step > Math.max(c0.th, c.th) * 1.9 || r < 0.75 || r > 1.33) break;
+        }
+        c0 = c; e = k;
       }
       return e;
     };
@@ -115,7 +118,7 @@ async function collectHighlights(pages, onProgress) {
       if (!text) continue;
       const h = { page: pi, pageEnd: pi, color: sp.color, fam: sp.fam, important: HL_IMPORTANT.has(sp.fam), text,
         head: joined.slice(0, sp.a).replace(/\s/g, '').length, tail: joined.slice(sp.b).replace(/\s/g, '').length };
-      if (h.important) { const [s0, s1] = sentenceRange(joined, sp.a, sp.b, (i) => lineEdge(i, -1), (i) => lineEdge(i, 1) + 1); h.sentence = trimMarks(tidyText(joined.slice(s0, s1))); h.sOpen = !SENT_END.test(h.sentence.slice(-1)); }
+      if (h.important) { const [s0, s1] = sentenceRange(joined, sp.a, sp.b, (i) => blockEdge(i, -1), (i) => blockEdge(i, 1) + 1); h.sentence = trimMarks(tidyText(joined.slice(s0, s1))); h.sOpen = !SENT_END.test(h.sentence.slice(-1)); }
       pageItems.push(h);
     }
     // ページをまたぐ文（黄・赤）: 前のページの最後と、このページの最初（間は柱・ページ番号くらい＝12 字まで、字は入れない）
@@ -132,7 +135,7 @@ async function collectHighlights(pages, onProgress) {
 }
 
 /* [a, b) を含む文の範囲。前の文の終わり・次の文の終わりが 120 字以内に見つかればそこまで、
-   見つからなければ（ページの最初・最後の文）その行の始め・終わりまで（柱やページ番号の行には広げない） */
+   見つからなければ（ページの最初・最後の文）その段落の始め・終わりまで（柱やページ番号の行には広げない） */
 function sentenceRange(t, a, b, lineStart, lineEnd) {
   let s = -1, e = -1;
   for (let k = a - 1; k >= 0 && a - k <= 120; k--) if (SENT_END.test(t[k])) { s = k + 1; break; }
