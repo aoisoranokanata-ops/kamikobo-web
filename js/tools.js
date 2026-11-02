@@ -127,6 +127,7 @@ class EraserTool {
       const out = [];
       let any = false;
       for (const s of page.strokes) {
+        if (!n.layerEditable(s)) { out.push(s); continue; }       // 消すのは今のレイヤーの線だけ
         if (this.opt.mode === 'stroke') {
           if (strokeHit(s, q.x, q.y, r)) { any = true; continue; }
           out.push(s);
@@ -201,9 +202,9 @@ class LassoTool {
   hideIds() { return new Set(this.sel.strokes.map((s) => s.id).concat(this.sel.images.map((im) => im.id))); }
   /* 何を選ぶか（クイックバーで切り替え）: 手書き・蛍光ペン・画像・文字/付箋・スタンプ */
   get pick() { return this.app.toolState.lasso.pick || {}; }
-  canStroke(s) { const P = this.pick; return s.tool === 'hl' ? P.hl !== false : P.ink !== false; }
+  canStroke(s) { const P = this.pick, n = this.app.note; return (!n || n.layerEditable(s)) && (s.tool === 'hl' ? P.hl !== false : P.ink !== false); }
   canObj(o) {
-    if (o.hidden) return false;
+    if (o.hidden || (this.app.note && !this.app.note.layerEditable(o))) return false;      // 選べるのは今のレイヤーの物だけ
     const P = this.pick, k = o.kind || 'image';
     return k === 'text' ? P.text !== false : k === 'stamp' ? P.stamp !== false : P.image !== false;     // リンクは画像と同じ扱い
   }
@@ -402,6 +403,7 @@ class LassoTool {
     const dx = at ? at.x - (b[0] + b[2]) / 2 : 20, dy = at ? at.y - (b[1] + b[3]) / 2 : 20;
     const m = { a: 1, b: 0, c: 0, d: 1, e: dx, f: dy };
     const cs = cb.strokes.map((s) => strokeTransformed(s, m)), ci = imgs.map((im) => imageTransformed(im, m, false));
+    for (const o of cs.concat(ci)) delete o.layer;           // 貼った物は今のレイヤーへ（swapBoth が付ける）
     this.sel = { page, strokes: [], images: [] };
     this.replace(v, '貼り付け', (sb) => sb.concat(cs), (ib) => ib.concat(ci), { strokes: cs, images: ci });
     return true;

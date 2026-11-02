@@ -202,6 +202,13 @@ GoodNotes 相当（を超える）を目標にした、ブラウザで動く日�
 - mode 'pick'（スキャナーの「⚡ 写真をまとめて」）: PDF は入れず、選んだ写真を [{blob,w,h,thumb}] で返してスキャンの一覧に足す。
 - `.scan`（スキャナー・まとめて PDF の全画面）は z-index 95: 小窓（.modal-back 100）を前に出すため（150 だと確認・名前・保存の小窓が後ろに隠れていた）。
 
+## 1.14 レイヤー（notebook.js・app.js の renderLayers）
+- ノートごとに 1〜5（LAYER_COUNT）。線・置いた物の `layer`（無ければ 1。strokeRecord も保存）。item.layers = {active, hidden:[…]}（Note.activeLayer・hiddenLayers、saveLayers）。
+- 新しい物は Note.tagNew が active を付ける（strokesCmd・swapCmd・swapBoth で「前に無かった物」に）。なげなわで動かす・部分消しで分かれた線は元の layer のまま、貼り付けは今のレイヤーへ。
+- `layerView(note, list)`: 隠したレイヤーを外し、レイヤーの順（1 が下）に並べる。画面（view・zoomwin・drawImages の opt.note）・小さな絵・スクリーンショット・PDF（exportPages の opt.note）・マーカーの書き出しで使う。
+- 消しゴム・なげなわは active の物だけ（layerEditable）。文字の道具・入力欄・リンクのタップは見えているレイヤーだけ（layerShown）。書いているレイヤーは隠せない。
+- 画面: ページの所の右上（#layers）。たたむと「🗂 レイヤー n（◯ つ隠し中）」、開くと 5〜1 の目（👁／—）・名前（タップで書くレイヤー ✎）・数、すべて表示・✎ だけ表示。
+
 ## フェーズ
 1. **基盤**（済）: 本棚（フォルダ・サブフォルダ・移動・名前・色・ゴミ箱・並べ替え・題名検索）・ノート（用紙テンプレート・大きさ・向き・紙の色）・
    無限キャンバス・ペン 3 種＋蛍光ペン・消しゴム 2 種・なげなわ・ページの追加/削除/並べ替え/回転・ジェスチャー・Pencil 優先・自動保存・PWA

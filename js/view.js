@@ -233,7 +233,7 @@ class NoteView {
     g.setTransform(d * m.a, d * m.b, d * m.c, d * m.d, d * m.e, d * m.f);
     const vr = this.visibleDocRect();
     const hide = this.hidden;
-    const visible = (list) => (hide && hide.size ? list.filter((s) => !hide.has(s.id)) : list);
+    const visible = (list) => { const l = layerView(n, list); return hide && hide.size ? l.filter((s) => !hide.has(s.id)) : l; };      // レイヤー・なげなわで動かしている物
     // 録音の再生中: まだ書いていない線は薄く
     const P = this.app.player && this.app.player.open && this.app.player.sync ? this.app.player : null;
     const drawInk = (list, clip, opt) => {
@@ -245,7 +245,7 @@ class NoteView {
     if (n.board) {
       const p = n.pages[0];
       drawBoardPaper(g, p, vr, this.s);
-      drawImages(g, p, hide, { screen: true });
+      drawImages(g, p, hide, { screen: true, note: n });
       drawInk(visible(p.strokes), [vr.x0, vr.y0, vr.x1, vr.y1], { minW: 0.8 / this.s });
       return;
     }
@@ -279,7 +279,7 @@ class NoteView {
         BgRender.want(p, this.s * d, [Math.max(0, clip[0]), Math.max(0, clip[1]), Math.min(p.w, clip[2]), Math.min(p.h, clip[3])],
           Math.abs(r.y + r.h / 2 - midY) / 1000);
       }
-      drawImages(g, p, hide, { screen: true });
+      drawImages(g, p, hide, { screen: true, note: n });
       drawInk(visible(p.strokes), clip, { minW: 0.8 / this.s });
       g.restore();
     }

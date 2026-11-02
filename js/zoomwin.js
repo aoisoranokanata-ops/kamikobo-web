@@ -176,8 +176,8 @@ class ZoomWindow {
     g.beginPath(); g.rect(0, 0, p.w, p.h); g.clip();
     drawPaper(g, p, this.s);
     if (p.bg) { BgRender.draw(g, p); BgRender.want(p, k, [Math.max(0, this.box.x), Math.max(0, this.box.y), Math.min(p.w, this.box.x + this.box.w), Math.min(p.h, this.box.y + this.boxH)], 0); }
-    drawImages(g, p, null, { screen: true });
-    drawStrokes(g, p.strokes, [this.box.x, this.box.y, this.box.x + this.box.w, this.box.y + this.boxH], { minW: 0.8 / this.s });
+    drawImages(g, p, null, { screen: true, note: this.app.note });
+    drawStrokes(g, layerView(this.app.note, p.strokes), [this.box.x, this.box.y, this.box.x + this.box.w, this.box.y + this.boxH], { minW: 0.8 / this.s });
     g.restore();
     // 自動で進む目安の線
     g.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
