@@ -382,3 +382,12 @@ label.row.tm-warn { margin: 0 10px 0 0; }
 .scan-thumb { position: relative; flex: none; display: flex; flex-direction: column; align-items: center; font-size: 11px; color: var(--muted); }
 .scan-thumb img { height: 72px; background: #fff; border-radius: 2px; box-shadow: 0 2px 6px rgba(0,0,0,.4); }
 .scan-del { position: absolute; top: -6px; right: -8px; width: 22px; height: 22px; min-height: 0; padding: 0; border-radius: 50%; font-size: 12px; }
+
+/* ---- 1.12 スキャンの仕上げ */
+.scan-tools { flex-direction: column; align-items: stretch; gap: 6px; }
+.scan-tools > .muted, .scan-tools > button { align-self: flex-start; }
+.scan-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.scan-slider { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--muted); min-width: 230px; flex: 1; }
+.scan-slider input { flex: 1; accent-color: var(--accent); }
+.scan-val { min-width: 44px; text-align: right; font-variant-numeric: tabular-nums; color: var(--text); }
+.scan-msg { color: #7fd69b; }

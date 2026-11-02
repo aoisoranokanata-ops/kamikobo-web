@@ -1259,16 +1259,27 @@ class App {
       return await pagesFromImages(files, (i, k) => pr.set(i, k));
     } finally { pr.close(); }
   }
+  /* 本棚から: 撮り終えたら ノートにする・PDF で保存・両方 */
   async scanNew() {
     const pages = await this.scanPages();
     if (!pages.length) return;
-    const item = await createNoteFromPages({ name: `スキャン ${fmtDate(Date.now()).slice(5)}`, parent: this.library.currentFolderForNew(), pages });
-    await new Promise((r) => setTimeout(r, 300));       // 画像の読み込みを待って小さな絵を作る
-    item.thumb = await this.thumbAsync(pages[0], 220);
-    await Store.putItem(item);
-    await this.library.refresh();
-    await this.openNote(item.id);
-    toast(`${pages.length} ページのスキャンを作りました`);
+    const name = `スキャン ${fmtDate(Date.now()).slice(5)}`;
+    const v = (await modal(`スキャンした ${pages.length} ページ`, 'ノートにしますか、PDF で保存しますか。', [
+      { label: '📄 PDF で保存', value: 'pdf' },
+      { label: 'ノートと PDF の両方', value: 'both' },
+      { label: '📓 ノートにする', primary: true, value: 'note' },
+    ], { sticky: true })) || 'note';                  // 閉じてしまっても撮った物は無くさない（ノートにする）
+    let item = null;
+    if (v !== 'pdf') {
+      item = await createNoteFromPages({ name, parent: this.library.currentFolderForNew(), pages });
+      await new Promise((r) => setTimeout(r, 300));     // 画像の読み込みを待って小さな絵を作る
+      item.thumb = await this.thumbAsync(pages[0], 220);
+      await Store.putItem(item);
+      await this.library.refresh();
+      await this.openNote(item.id);
+      toast(`${pages.length} ページのスキャンを作りました`);
+    }
+    if (v !== 'note') await this.exportPages(pages, name, { paper: false });
   }
   async scanInsert() {
     const n = this.note;
