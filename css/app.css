@@ -367,7 +367,7 @@ label.row.tm-warn { margin: 0 10px 0 0; }
 .tpl.cv-none b { font-size: 22px; color: var(--muted); }
 
 /* ---- 1.11 書類のスキャン（js/scanner.js） */
-.scan { position: fixed; inset: 0; z-index: 150; background: #141518; display: flex; flex-direction: column; padding-top: var(--safe-t); padding-bottom: var(--safe-b); }
+.scan { position: fixed; inset: 0; z-index: 95;      /* 小窓（.modal-back 100）・トーストより下、ノートの道具（〜60）より上 */ background: #141518; display: flex; flex-direction: column; padding-top: var(--safe-t); padding-bottom: var(--safe-b); }
 .scan-head, .scan-tools { display: flex; align-items: center; gap: 8px; padding: 8px 14px; flex-wrap: wrap; }
 .scan-head { background: var(--panel); border-bottom: 1px solid var(--line); }
 .scan-head b { font-size: 16px; }
@@ -391,3 +391,24 @@ label.row.tm-warn { margin: 0 10px 0 0; }
 .scan-slider input { flex: 1; accent-color: var(--accent); }
 .scan-val { min-width: 44px; text-align: right; font-variant-numeric: tabular-nums; color: var(--text); }
 .scan-msg { color: #7fd69b; }
+
+/* ---- 1.13 まとめて PDF（js/tray.js） */
+.tray-actions { display: flex; gap: 8px; }
+.tray-tools { border-top: none; border-bottom: 1px solid var(--line); }
+.tray-sep { width: 1px; align-self: stretch; background: var(--line); margin: 0 4px; }
+.tray-fit { min-height: 32px; padding: 4px 8px; font-size: 13px; }
+.tray-grid { flex: 1; min-height: 0; overflow-y: auto; -webkit-overflow-scrolling: touch; display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  gap: 16px; padding: 16px; align-content: start; }
+.tray-empty { grid-column: 1 / -1; text-align: center; padding: 60px 20px; line-height: 1.7; }
+.tray-tile { position: relative; display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 10px 8px 8px; background: #1b1c20;
+  border: 2px solid var(--line); border-radius: 12px; min-height: 0; }
+.tray-tile.on { border-color: var(--accent); background: #1d2433; }
+.tray-tile img { width: 100%; height: 150px; object-fit: contain; background: #fff; border-radius: 3px; }
+.tray-no { position: absolute; top: 4px; left: 6px; font-size: 12px; font-weight: 700; background: rgba(0,0,0,.6); color: #fff; border-radius: 10px; padding: 0 7px; }
+.tray-check { position: absolute; top: 4px; right: 6px; width: 26px; height: 26px; border-radius: 50%; border: 2px solid #fff; background: rgba(0,0,0,.35);
+  display: flex; align-items: center; justify-content: center; font-weight: 700; color: #fff; }
+.tray-tile.on .tray-check { background: var(--accent); }
+.tray-badge { position: absolute; bottom: 30px; left: 8px; font-size: 11px; background: #6b5b95; color: #fff; border-radius: 8px; padding: 1px 7px; }
+.tray-badge.fixed { background: #3f7d5a; }
+.tray-name { font-size: 11px; color: var(--muted); max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tray-status { padding: 6px 16px calc(8px + var(--safe-b)); min-height: 28px; }

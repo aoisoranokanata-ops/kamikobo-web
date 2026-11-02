@@ -1293,6 +1293,30 @@ class App {
     toast(`${pages.length} ページを挿入しました`);
   }
 
+  /* まとめて PDF（tray.js）: 「ノートにする」を選んだ時は、選んだ写真・PDF を並べた順にノートへ */
+  async trayOpen() {
+    const list = await Tray.open();
+    if (!list || !list.length) return;
+    const pr = progressBox('ノートにしています');
+    const pages = [];
+    try {
+      for (let i = 0; i < list.length; i++) {
+        const it = list[i];
+        pr.set(i, list.length, it.name);
+        if (it.kind === 'pdf') pages.push(...await pagesFromPdf(new File([it.bytes], it.name, { type: 'application/pdf' })));
+        else pages.push(...await pagesFromImages([new File([it.blob], (it.name || 'image').replace(/\.[^.]+$/, '') + '.jpg', { type: 'image/jpeg' })]));
+      }
+    } catch (e) { toast(e.message || String(e), { error: true, ms: 6000 }); } finally { pr.close(); }
+    if (!pages.length) return;
+    const item = await createNoteFromPages({ name: `まとめ ${fmtDate(Date.now()).slice(5)}`, parent: this.library.currentFolderForNew(), pages });
+    await new Promise((r) => setTimeout(r, 300));
+    item.thumb = await this.thumbAsync(pages[0], 220);
+    await Store.putItem(item);
+    await this.library.refresh();
+    await this.openNote(item.id);
+    toast(`${pages.length} ページのノートを作りました`);
+  }
+
   // ================= その他の UI
   showBadge(text) {
     const b = $('#badge');
