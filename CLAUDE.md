@@ -160,6 +160,16 @@ GoodNotes 相当（を超える）を目標にした、ブラウザで動く日�
   引いた所の頭の句読点・記号（「このように、国政調査権」の「、」など。開きかっこは残す）と終わりの読点は `trimMarks` で取る。
   文全体で前後に。が見つからない時（ページの最初・最後の文）は、その段落の始め・終わりまで広げる（blockEdge: 行の間が行の高さ×1.9 より空く・字の大きさが 3/4〜4/3 を外れる所＝柱・ページ番号・見出しで止まる）。
 
+## 1.10 テンプレートの追加（js/templates.js・paper.js）
+- 用紙の欄（tplPicker の cat）: 基本・勉強・仕事・週間・月間（plan）・ミュージック（music。五線譜はここへ移した）・表紙（cover）・自作・プランナー（日付入り）。
+- 週間・月間（PLAN_SHEETS、日付なし・月曜はじまり・土は青・日は赤）: w-plan（縦に 7 段＋ToDo・メモ）、w-plan-col（7 列）、m-plan（6 週のカレンダー＋目標・メモ）、m-list（1〜31 日）。
+- ミュージック（MUSIC_SHEETS）: music-grand（大譜表）、music-guitar（五線＋TAB）、music-tab（TAB 6 線。字の下に紙の色を敷く＝Lay.bg）、music-chord（6 弦×5 フレット）、music-lyric（コード行＋歌詞行）。上に曲名など。
+- 表紙のページ（COVER_SHEETS: cv-band・cv-label・cv-frame・cv-stripe・cv-dots・cv-simple）: paper.accent（COVER_ACCENTS）・paper.title（空なら手書き用の線）。
+  Lay に circle を足した（PDF の PdfCtx.arc も対応）。templateLayout のキャッシュの鍵に accent・title。新しいノートの「表紙のページ」は 1 ページ目に入れる
+  （createNote の cover、プランナー・自作は前に足す）。題名はノートの名前。用紙の画面の「表紙」欄では色と題名を選べる。
+  isCoverPaper: 表紙の後ろに足すページは item.paper（blankPage）。本棚のカード（item.cover）は「本棚のカード」ボタンのまま。
+- createNoteFromPages は landscape も受け取る（プランナーの横向き）。
+
 ## フェーズ
 1. **基盤**（済）: 本棚（フォルダ・サブフォルダ・移動・名前・色・ゴミ箱・並べ替え・題名検索）・ノート（用紙テンプレート・大きさ・向き・紙の色）・
    無限キャンバス・ペン 3 種＋蛍光ペン・消しゴム 2 種・なげなわ・ページの追加/削除/並べ替え/回転・ジェスチャー・Pencil 優先・自動保存・PWA

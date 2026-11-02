@@ -14,14 +14,14 @@ const PAPER_COLORS = [
   { id: 'green', label: '緑', bg: '#eef5ec', line: '#bcd3b8', strong: '#d6a0a0' },
 ];
 
-/* 用紙の種類。mm は線の間隔（ミリ）。cat: basic（基本）・study（勉強・仕事）・planner（プランナーが作る。一覧には出さない） */
+/* 用紙の種類。mm は線の間隔（ミリ）。cat: basic（基本）・study（勉強・仕事）・plan（週間・月間、日付なし）・music（ミュージック）・
+   cover（表紙のページ）・planner（プランナーが作る。一覧には出さない） */
 const PAPER_TYPES = [
   { id: 'blank', label: '無地', cat: 'basic' },
   { id: 'ruled', label: '横罫', mm: 7, cat: 'basic' },
   { id: 'ruled-narrow', label: '横罫（狭い）', mm: 6, cat: 'basic' },
   { id: 'grid', label: '方眼', mm: 5, cat: 'basic' },
   { id: 'dot', label: 'ドット', mm: 5, cat: 'basic' },
-  { id: 'music', label: '五線譜', cat: 'basic' },
   { id: 'cornell', label: 'コーネル', mm: 7, cat: 'study' },
   { id: 'study', label: '勉強ノート', cat: 'study' },
   { id: 'meeting', label: '議事録', cat: 'study' },
@@ -30,6 +30,22 @@ const PAPER_TYPES = [
   { id: 'twocol', label: '2 段', cat: 'study' },
   { id: 'storyboard', label: '絵コンテ', cat: 'study' },
   { id: 'genko', label: '原稿用紙', cat: 'study' },
+  { id: 'w-plan', label: '週間（月曜〜・縦）', cat: 'plan' },
+  { id: 'w-plan-col', label: '週間（月曜〜・7 列）', cat: 'plan' },
+  { id: 'm-plan', label: '月間（カレンダー）', cat: 'plan' },
+  { id: 'm-list', label: '月間（1〜31 日）', cat: 'plan' },
+  { id: 'music', label: '五線譜', cat: 'music' },
+  { id: 'music-grand', label: '大譜表（ピアノ）', cat: 'music' },
+  { id: 'music-guitar', label: 'ギタースコア', cat: 'music' },
+  { id: 'music-tab', label: 'TAB 譜', cat: 'music' },
+  { id: 'music-chord', label: 'コード表', cat: 'music' },
+  { id: 'music-lyric', label: '歌詞とコード', cat: 'music' },
+  { id: 'cv-band', label: '帯', cat: 'cover' },
+  { id: 'cv-label', label: 'ラベル', cat: 'cover' },
+  { id: 'cv-frame', label: '枠', cat: 'cover' },
+  { id: 'cv-stripe', label: 'ストライプ', cat: 'cover' },
+  { id: 'cv-dots', label: 'ドット', cat: 'cover' },
+  { id: 'cv-simple', label: 'シンプル', cat: 'cover' },
   { id: 'p-year', label: '年間', cat: 'planner' },
   { id: 'p-month', label: '月間', cat: 'planner' },
   { id: 'p-week', label: '週間', cat: 'planner' },
