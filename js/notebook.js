@@ -221,6 +221,7 @@ function blankPage(item, id, like = null) {
     infinite: item.kind === 'board', strokes: [], images: [],
   };
   if (like && like.bg && like.bg.tpl) p.bg = { ...like.bg };      // 自作テンプレート（PDF）は次のページにも
+  p.images = docFieldsFor(p);                                       // 書類の用紙は入力欄を置く
   return p;
 }
 
@@ -251,7 +252,7 @@ async function createNote({ name, parent, kind = 'paged', paper, size = 'A4', la
     created: now, updated: now, trashed: false, paper: paper || { type: 'ruled', color: 'white' }, size, landscape, pageIds: [] };
   const list = [];
   for (let i = 0; i < (kind === 'board' ? 1 : Math.max(1, pages)); i++) list.push(blankPage(item, uid('p')));
-  if (cover && kind !== 'board') { const c = blankPage(item, uid('p')); c.paper = cover; list.unshift(c); }
+  if (cover && kind !== 'board') { const c = blankPage(item, uid('p')); c.paper = cover; c.images = []; list.unshift(c); }
   item.pageIds = list.map((p) => p.id);
   await Store.saveNote(item, list.map(pageRecord));
   return item;

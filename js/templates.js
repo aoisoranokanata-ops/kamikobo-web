@@ -1,5 +1,5 @@
 'use strict';
-/* テンプレート集: 勉強・仕事の用紙（議事録・習慣トラッカー・勉強ノート・2段・絵コンテ）、週間・月間（日付なし・月曜はじまり）、
+/* テンプレート集: 勉強・仕事の用紙（議事録・習慣トラッカー・勉強ノート・2段・絵コンテ）、書類（入力欄にタイピング）、週間・月間（日付なし・月曜はじまり）、
    ミュージック（大譜表・ギタースコア・TAB 譜・コード表・歌詞とコード）、表紙のページ（paper.accent の色・paper.title の題名）、
    プランナー（年・月・週・日。祝日つき・ページ間リンク）、自作テンプレート（PDF・画像から）、本棚のカードの表紙。
    用紙は「描く物の並び（display list）」で作る → 画面（canvas）と PDF（PdfCtx）が同じ物を描ける。リンクの場所も同じ計算から出す。 */
@@ -53,12 +53,14 @@ function dayColor(dt, ink) { return holidayName(dt) || dt.getDay() === 0 ? SUN :
 
 // ---- 描く物の並び
 class Lay {
-  constructor(pc) { this.els = []; this.links = []; this.ink = P_INK[pc.id] || P_INK.white; this.sub = P_SUB[pc.id] || P_SUB.white; this.line = pc.line; this.strong = pc.strong; this.bg = pc.bg; }
+  constructor(pc) { this.els = []; this.links = []; this.fields = []; this.ink = P_INK[pc.id] || P_INK.white; this.sub = P_SUB[pc.id] || P_SUB.white; this.line = pc.line; this.strong = pc.strong; this.bg = pc.bg; }
   text(text, x, y, size, color, opt = {}) { this.els.push({ t: 'text', text, x, y, size, color: color || this.ink, bold: !!opt.bold, align: opt.align || 'left' }); }
   lines(segs, color, w = 0.5) { this.els.push({ t: 'lines', segs, c: color || this.line, w }); }
   rect(x, y, w, h, opt = {}) { this.els.push({ t: 'rect', x, y, w, h, r: opt.r || 0, c: opt.c === undefined ? this.sub : opt.c, lw: opt.lw || 0.8, fill: opt.fill || null }); }
   link(x, y, w, h, to) { this.links.push({ rect: [x, y, w, h], to }); }
   circle(x, y, r, fill) { this.els.push({ t: 'circle', x, y, r, fill }); }
+  /* 入力欄（書類の用紙）: ページを作る時に文字の物（kind:'text', field）になる。描く物には入らない */
+  field(x, y, w, h, opt = {}) { this.fields.push({ x, y, w, h, ph: opt.ph || '', size: opt.size || 11, bold: !!opt.bold }); }
   /* 罫線を y0〜y1 に step ごと */
   ruled(x0, x1, y0, y1, step, color) { const s = []; for (let y = y0; y <= y1 + 0.01; y += step) s.push(x0, y, x1, y); this.lines(s, color); }
   checkbox(x, y, s) { this.rect(x, y, s, s, { r: 1.5, c: this.sub, lw: 0.8 }); }
@@ -173,6 +175,91 @@ const SHEETS = {
       L.ruled(tx, w - TM, y + 36, y + 18 + fw * (9 / 16), 18);
       L.text('秒', w - TM - 30, y + 12, 9, L.sub);
     }
+  },
+};
+
+// ---- 書類（入力）: タイピングで書く用紙。L.field の所に入力欄（文字の物）を置く。タップでキーボード
+/* 見出し（左）＋入力欄（右）の 1 行 */
+function docRow(L, label, x, y, w, h, opt = {}) {
+  const lw = opt.lw || 64;
+  L.text(label, x + 6, y + h / 2 + 4, 10, L.sub, { bold: true });
+  L.lines([x + lw, y + h, x + w, y + h], L.sub, 0.6);
+  L.field(x + lw, y + 2, w - lw, h - 4, { ph: opt.ph || label, size: opt.size || 11 });
+}
+/* 見出しつきの枠（中は入力欄） */
+function docBox(L, label, x, y, w, h, ph) {
+  L.rect(x, y, w, h, { r: 4 });
+  L.text(label, x + 8, y + 16, 10, L.ink, { bold: true });
+  L.field(x + 6, y + 24, w - 12, h - 30, { ph: ph || `${label}を入力`, size: 11 });
+}
+const DOC_SHEETS = {
+  /* 文書: 題名と本文だけ */
+  'd-plain'(L, w, h) {
+    L.field(TM, TM + 6, w - TM * 2, 32, { ph: 'タイトル', size: 18, bold: true });
+    L.lines([TM, TM + 44, w - TM, TM + 44], L.strong, 0.9);
+    L.field(TM, TM + 54, w - TM * 2, h - TM * 2 - 54, { ph: '本文（タップして入力）', size: 11 });
+  },
+  /* レポート: 題名・科目・提出日・学籍番号・氏名・本文 */
+  'd-report'(L, w, h) {
+    L.field(TM, TM + 8, w - TM * 2, 32, { ph: 'レポートの題名', size: 18, bold: true });
+    const y0 = TM + 52, cw = (w - TM * 2) / 2, rh = 24;
+    L.rect(TM, y0, w - TM * 2, rh * 2, { r: 3 });
+    L.lines([TM + cw, y0, TM + cw, y0 + rh * 2, TM, y0 + rh, w - TM, y0 + rh], L.sub, 0.6);
+    [['科目', 0, 0], ['提出日', 1, 0], ['学籍番号', 0, 1], ['氏名', 1, 1]].forEach(([lb, c, r]) => {
+      const x = TM + c * cw, y = y0 + r * rh;
+      L.text(lb, x + 6, y + 16, 9, L.sub, { bold: true });
+      L.field(x + 54, y + 3, cw - 60, rh - 6, { ph: lb, size: 11 });
+    });
+    const by = y0 + rh * 2 + 14;
+    L.text('本文', TM, by + 10, 10, L.ink, { bold: true });
+    L.lines([TM, by + 16, w - TM, by + 16], L.strong, 0.8);
+    L.field(TM, by + 22, w - TM * 2, h - TM - by - 22, { ph: '本文を入力', size: 11 });
+  },
+  /* 議事録（入力）: 日時・場所・出席者・議題・内容・決定事項・次回・ToDo */
+  'd-minutes'(L, w, h) {
+    L.text('議事録', TM, TM + 22, 20, L.ink, { bold: true });
+    let y = TM + 36;
+    for (const [lb, rh] of [['日時', 24], ['場所', 24], ['出席者', 36], ['議題', 24]]) { docRow(L, lb, TM, y, w - TM * 2, rh); y += rh; }
+    const rest = h - TM - y - 16;
+    docBox(L, '内容', TM, y + 10, w - TM * 2, rest * 0.5);
+    docBox(L, '決定事項', TM, y + 16 + rest * 0.5, w - TM * 2, rest * 0.24);
+    docBox(L, '次回・ToDo（担当・期限）', TM, y + 22 + rest * 0.74, w - TM * 2, rest * 0.26 - 6);
+  },
+  /* 日報: 日付・氏名・業務・成果と課題・明日の予定・所感 */
+  'd-daily'(L, w, h) {
+    L.text('日報', TM, TM + 22, 20, L.ink, { bold: true });
+    const half = (w - TM * 2) / 2;
+    docRow(L, '日付', TM, TM + 32, half - 8, 24, { lw: 40 });
+    docRow(L, '氏名', TM + half + 8, TM + 32, half - 8, 24, { lw: 40 });
+    const y = TM + 66, rest = h - TM - y, gap = 8;
+    const parts = [['今日の業務', 0.34], ['成果・課題', 0.24], ['明日の予定', 0.22], ['所感・連絡', 0.2]];
+    let yy = y;
+    for (const [lb, k] of parts) { const bh = rest * k - gap; docBox(L, lb, TM, yy, w - TM * 2, bh); yy += bh + gap; }
+  },
+  /* 手紙（便箋）: 宛名・本文（罫線に字が乗る）・日付・差出人 */
+  'd-letter'(L, w, h) {
+    const size = 13, lh = size * 1.45, pad = size * 0.15, x0 = TM + 14, x1 = w - TM - 14;
+    L.field(x0, TM + 20, (x1 - x0) * 0.7, 26, { ph: '宛名（○○様）', size: 15, bold: true });
+    const top = TM + 62, bottom = h - TM - 92;
+    L.field(x0, top, x1 - x0, bottom - top, { ph: '本文（拝啓　…）', size });
+    const segs = [];
+    for (let yy = top + pad + size * 1.05 + 3; yy < bottom; yy += lh) segs.push(x0, yy, x1, yy);
+    L.lines(segs, L.line, 0.5);
+    L.field(x1 - 220, h - TM - 82, 220, 22, { ph: '日付', size: 11 });
+    L.field(x1 - 220, h - TM - 54, 220, 26, { ph: '差出人', size: 13 });
+    L.rect(TM, TM, w - TM * 2, h - TM * 2, { r: 6, c: L.line, lw: 0.8 });
+  },
+  /* 送付状（FAX・郵送）: 宛先・差出人・日付・枚数・件名・連絡事項 */
+  'd-fax'(L, w, h) {
+    L.text('送付状', w / 2, TM + 26, 22, L.ink, { bold: true, align: 'center' });
+    L.lines([w / 2 - 60, TM + 34, w / 2 + 60, TM + 34], L.strong, 1.2);
+    let y = TM + 50;
+    const W = w - TM * 2;
+    for (const [lb, rh] of [['宛先', 28], ['ご担当', 28], ['差出人', 28], ['電話・FAX', 24], ['日付', 24], ['枚数（本状含む）', 24], ['件名', 28]]) {
+      docRow(L, lb, TM, y, W, rh, { lw: lb.length > 5 ? 100 : 72 });
+      y += rh;
+    }
+    docBox(L, '連絡事項', TM, y + 14, W, h - TM - y - 14);
   },
 };
 
@@ -516,7 +603,7 @@ const PLANNER = {
 /* 用紙の並び（キャッシュ）。テンプレートの種類でなければ null */
 const _layCache = new Map();
 function templateLayout(pg, pc) {
-  const P = pg.paper || {}, fn = SHEETS[P.type] || PLAN_SHEETS[P.type] || MUSIC_SHEETS[P.type] || COVER_SHEETS[P.type] || PLANNER[P.type];
+  const P = pg.paper || {}, fn = SHEETS[P.type] || DOC_SHEETS[P.type] || PLAN_SHEETS[P.type] || MUSIC_SHEETS[P.type] || COVER_SHEETS[P.type] || PLANNER[P.type];
   if (!fn) return null;
   const key = `${P.type}|${pc.id}|${pg.w}|${pg.h}|${P.y}|${P.m}|${P.d}|${P.accent}|${P.title}`;
   let L = _layCache.get(key);
@@ -638,4 +725,14 @@ async function coverDialog(cur, name) {
   const v = await modal('表紙', el('div', { class: 'cv-dialog' }, preview, el('div', {}, styles, colors, el('div', { class: 'cv-row' }, imgBtn, none))),
     [{ label: 'キャンセル', value: 'cancel' }, { label: '決める', primary: true, value: 'ok' }], { wide: true });
   return v === 'ok' ? pick : undefined;
+}
+
+/* 書類の用紙の入力欄 → 文字の物（ページを作った・用紙を書類にした時に置く） */
+function docFieldsFor(pg) {
+  const P = pg.paper || {};
+  if (!DOC_SHEETS[P.type]) return [];
+  const pc = paperColor(P), L = templateLayout(pg, pc);
+  const color = pc.id === 'dark' ? '#ecedf0' : '#1d1d1f';
+  return L.fields.map((f) => ({ id: uid('m'), kind: 'text', field: true, ph: f.ph, minH: f.h, x: f.x, y: f.y, w: f.w, h: f.h, rot: 0,
+    text: '', size: f.size, color, font: 'gothic', bold: f.bold, bg: null }));
 }
