@@ -76,7 +76,7 @@ class App {
     const item = await Store.getItem(id);
     if (!item) { toast('ノートが見つかりません', { error: true }); return; }
     this.note = await Note.load(item);
-    this.note.listeners.push(() => { this.saveSoon(); this.updateStatus(); });
+    this.note.listeners.push(() => { this.saveSoon(); this.updateStatus(); if (this._lyOpen) this.renderLayersSoon(); });
     $('#library').hidden = true;
     $('#editor').hidden = false;
     $('#note-title').textContent = item.name;
@@ -98,6 +98,60 @@ class App {
     this.setTool(this.toolName === 'hand' ? 'pen' : this.toolName);
     this.updateStatus();
     if (item.textV !== TEXT_VER) this.refreshNoteText(this.note);
+    this._lyOpen = false;
+    this.renderLayers();
+  }
+
+  // ================= レイヤー（右上。1〜5、目で見せる・隠す、✎ が書くレイヤー）
+  renderLayers() {
+    const box = $('#layers'), n = this.note;
+    if (!box) return;
+    box.hidden = !n;
+    if (!n) return;
+    box.innerHTML = '';
+    const off = n.hiddenLayers.size;
+    box.append(el('button', { class: 'ly-head' + (this._lyOpen ? ' on' : ''), title: 'レイヤー（書くレイヤー・見せる／隠す）',
+      onclick: () => { this._lyOpen = !this._lyOpen; this.renderLayers(); } },
+    el('span', { class: 'ly-ic' }, '🗂'), `レイヤー ${n.activeLayer}`, off ? el('span', { class: 'ly-off' }, `${off} つ隠し中`) : null));
+    if (!this._lyOpen) return;
+    const counts = new Array(LAYER_COUNT + 1).fill(0);
+    for (const p of n.pages) for (const o of p.strokes.concat(p.images || [])) if (!o.hidden && !o.field) counts[layerOf(o)]++;
+    const list = el('div', { class: 'ly-list' });
+    for (let k = LAYER_COUNT; k >= 1; k--) {
+      const shown = !n.hiddenLayers.has(k), act = n.activeLayer === k;
+      list.append(el('div', { class: 'ly-row' + (act ? ' act' : '') + (shown ? '' : ' off') },
+        el('button', { class: 'ly-eye', disabled: act, title: act ? '書いているレイヤーは隠せません' : shown ? '隠す' : '見せる', onclick: () => this.toggleLayer(k) },
+          el('span', {}, shown ? '👁' : '—')),
+        el('button', { class: 'ly-name', title: 'このレイヤーに書く', onclick: () => this.setActiveLayer(k) }, `レイヤー ${k}`, act ? el('b', {}, ' ✎') : null),
+        el('span', { class: 'ly-n' }, String(counts[k]))));
+    }
+    list.append(el('div', { class: 'ly-btns' },
+      el('button', { class: 'small', disabled: !off, onclick: () => { n.hiddenLayers.clear(); this.layersChanged(); } }, 'すべて表示'),
+      el('button', { class: 'small', onclick: () => { n.hiddenLayers = new Set([1, 2, 3, 4, 5].filter((k) => k !== n.activeLayer)); this.layersChanged(); } }, '✎ のレイヤーだけ表示')),
+    el('p', { class: 'ly-hint' }, '新しく書く物は ✎ のレイヤーに入ります。消しゴム・なげなわは ✎ のレイヤーの物だけ。上のレイヤーほど前に重なり、隠したレイヤーは PDF にも出ません。'));
+    box.append(list);
+  }
+  renderLayersSoon() { clearTimeout(this._lyT); this._lyT = setTimeout(() => this.renderLayers(), 120); }
+  setActiveLayer(k) {
+    const n = this.note;
+    if (!n || n.activeLayer === k) return;
+    n.activeLayer = k;
+    n.hiddenLayers.delete(k);              // 書くレイヤーは見えるように
+    this.showBadge(`レイヤー ${k} に書きます`);
+    this.layersChanged();
+  }
+  toggleLayer(k) {
+    const n = this.note;
+    if (!n || n.activeLayer === k) return;
+    if (n.hiddenLayers.has(k)) n.hiddenLayers.delete(k); else n.hiddenLayers.add(k);
+    this.layersChanged();
+  }
+  layersChanged() {
+    const n = this.note;
+    if (this.tools.lasso.sel) this.tools.lasso.clear(this.view);       // 選んでいた物は別のレイヤーかもしれない
+    n.saveLayers();
+    this.view.invalidate();
+    this.renderLayers();
   }
   /* 前の版で読み込んだ PDF の文字を読み直す（1.5 より前は日本語の対応表を読めず、OCR した PDF の文字などが抜けていた） */
   refreshNoteText(n) {
@@ -391,8 +445,8 @@ class App {
     g.setTransform(K, 0, 0, K, -x0 * K, -y0 * K);
     if (p.infinite) drawBoardPaper(g, p, { x0, y0, x1: x0 + w, y1: y0 + h }, K); else drawPaper(g, p, K);
     if (p.bg) { await BgRender.ensure(p, Math.min(BgRender.capK(p), K)); BgRender.draw(g, p); }
-    drawImages(g, p);
-    drawStrokes(g, p.strokes, [x0, y0, x0 + w, y0 + h]);
+    drawImages(g, p, null, { note: this.note });
+    drawStrokes(g, layerView(this.note, p.strokes), [x0, y0, x0 + w, y0 + h]);
     const blob = await new Promise((r) => c.toBlob(r, 'image/png'));
     const v = await modal('スクリーンショット', el('img', { src: URL.createObjectURL(blob), class: 'shot-prev' }), [
       { label: '閉じる', value: null }, { label: '共有・保存', value: 'share' }, { label: 'コピー', value: 'copy' }, { label: 'このページに画像として貼る', primary: true, value: 'paste' }]);
@@ -623,7 +677,7 @@ class App {
   async panelAction(kind) {
     const n = this.note, pages = this.selectedPages();
     if (!pages.length) { toast('ページを選んでください'); return; }
-    if (kind === 'pdf') await this.exportPages(pages, `${n.item.name}（${pages.length} ページ）`);
+    if (kind === 'pdf') await this.exportPages(pages, `${n.item.name}（${pages.length} ページ）`, { note: n });
     else if (kind === 'extract') {
       const item = await createNoteFromPages({ name: n.item.name + '（抜き出し）', parent: n.item.parent, pages: pages.map((p) => copyPage(p, '')), size: n.item.size });
       item.thumb = await this.thumbAsync(pages[0], 220); await Store.putItem(item);
@@ -758,12 +812,12 @@ class App {
     popMenu(anchor, [
       { label: '📄 PDF に書き出す・共有…', fn: () => this.exportDialog() },
       { label: '🗂 このノートをファイルで（紙工房 Web で開ける .kmkw）', fn: () => this.exportNoteFile() },
-      { label: '🖍 マーカーした所を書き出す（箇条書き・表）', fn: () => this.highlightsDialog(this.note.pages, this.note.item.name, true) },
+      { label: '🖍 マーカーした所を書き出す（箇条書き・表）', fn: () => this.highlightsDialog(this.note.pages, this.note.item.name, true, this.note) },
     ]);
   }
   async exportDialog() {
     const n = this.note;
-    if (n.board) { await this.exportPages([boardAsPage(n.pages[0])], n.item.name); return; }
+    if (n.board) { await this.exportPages([boardAsPage(n.pages[0])], n.item.name, { note: n }); return; }
     const range = el('select', {}, el('option', { value: 'all' }, `すべてのページ（${n.pages.length}）`), el('option', { value: 'cur' }, `このページ（${this.view.currentPageIndex() + 1}）`),
       el('option', { value: 'custom' }, 'ページを指定…'));
     const spec = el('input', { type: 'text', placeholder: '例: 1-3, 5', class: 'wide', hidden: true });
@@ -780,10 +834,12 @@ class App {
       pages = parsePageSpec(spec.value, n.pages.length).map((i) => n.pages[i]);
       if (!pages.length) { toast('ページの指定が読めません', { error: true }); return; }
     }
-    await this.exportPages(pages, n.item.name, { paper: paper.checked });
+    await this.exportPages(pages, n.item.name, { paper: paper.checked, note: n });
   }
+  /* opt.note = そのノートのレイヤー（隠したレイヤーは PDF に出さない） */
   async exportPages(pages, name, opt = {}) {
     await this.saveNote(true);
+    if (opt.note) pages = pages.map((p) => ({ ...p, strokes: layerView(opt.note, p.strokes), images: layerView(opt.note, p.images || []) }));
     const pr = progressBox('PDF を作っています');
     let bytes;
     try { bytes = await exportPdf(pages, { title: name, paper: opt.paper !== false, onProgress: (i, k) => pr.set(i, k) }); }
@@ -1333,10 +1389,10 @@ class App {
     if (hit.inside) {
       const q = n.docToPage(hit.page, P.x, P.y);
       if (this.player.open && this.player.sync && this.player.seekToStroke(hit.page, q, 10 / this.view.s)) return;
-      const link = (hit.page.images || []).slice().reverse().find((o) => o.kind === 'link' && imageHit(o, q.x, q.y));
+      const link = (hit.page.images || []).slice().reverse().find((o) => o.kind === 'link' && n.layerShown(o) && imageHit(o, q.x, q.y));
       if (link) { this.followLink(link); return; }
       // 書類の入力欄を指でタップ → キーボードで入力
-      const field = !this.tools.text.edit && (hit.page.images || []).slice().reverse().find((o) => o.kind === 'text' && o.field && imageHit(o, q.x, q.y));
+      const field = !this.tools.text.edit && (hit.page.images || []).slice().reverse().find((o) => o.kind === 'text' && o.field && n.layerShown(o) && imageHit(o, q.x, q.y));
       if (field) { this.setTool('text'); this.tools.text.open(this.view, hit.page, field, false); return; }
       if (this.zoomWin.open && !n.board && this.zoomWin.moveTo(hit.page, q)) return;
     }
@@ -1487,8 +1543,9 @@ class App {
   // ================= マーカーした所の書き出し（js/highlights.js）
   /* pages の蛍光ペンの所の文字を、箇条書き（テキスト・Markdown）か表（CSV）にして保存・コピー・ノートに貼る。
      inEditor = 開いているノート（貼れる） */
-  async highlightsDialog(pages, name, inEditor) {
+  async highlightsDialog(pages, name, inEditor, note = null) {
     if (inEditor) await this.saveNote(true);
+    if (note) pages = pages.map((p) => ({ ...p, strokes: layerView(note, p.strokes) }));      // 隠したレイヤーのマーカーは入れない
     const pr = progressBox('マーカーした所の文字を読み取っています');
     let res;
     try { res = await collectHighlights(pages, (i, k) => pr.set(i, k)); }
@@ -1796,16 +1853,16 @@ function makeThumb(note, p, W) {
   if (p.infinite) {
     g.setTransform(k, 0, 0, k, -r[0] * k, -r[1] * k);
     drawBoardPaper(g, p, { x0: r[0], y0: r[1], x1: r[2], y1: r[3] }, k);
-    drawImages(g, p);
-    drawStrokes(g, p.strokes, null, { minW: 0.9 / k });
+    drawImages(g, p, null, { note });
+    drawStrokes(g, layerView(note, p.strokes), null, { minW: 0.9 / k });
   } else {
     const pm = note.pageMatrix(p);
     g.setTransform(k, 0, 0, k, -p.disp.x * k, -p.disp.y * k);
     g.transform(pm.a, pm.b, pm.c, pm.d, pm.e, pm.f);
     drawPaper(g, p, k * 1.5);
     if (p.bg) BgRender.draw(g, p);
-    drawImages(g, p);
-    drawStrokes(g, p.strokes, null, { minW: 0.9 / k });
+    drawImages(g, p, null, { note });
+    drawStrokes(g, layerView(note, p.strokes), null, { minW: 0.9 / k });
   }
   return c.toDataURL('image/jpeg', 0.82);
 }

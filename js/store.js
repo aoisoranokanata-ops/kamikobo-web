@@ -144,5 +144,6 @@ function imageRecord(im) {
 function strokeRecord(s) {
   const r = { id: s.id, tool: s.tool, pen: s.pen, color: s.color, w: s.w, op: s.op, t0: s.t0 || 0, pts: s.pts };
   if (s.fill) r.fill = s.fill;            // 図形ツールの塗り
+  if (s.layer > 1) r.layer = s.layer;     // レイヤー（無ければ 1）
   return r;
 }

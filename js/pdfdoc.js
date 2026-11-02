@@ -404,8 +404,9 @@ const ImageCache = {
 };
 
 /* ページの座標の g に画像を描く（hide = 描かない id） */
+/* opt.note = そのノートのレイヤー（隠したレイヤーは描かない・上の番号ほど前） */
 function drawImages(g, p, hide, opt) {
-  for (const im of p.images || []) {
+  for (const im of opt && opt.note ? layerView(opt.note, p.images) : p.images || []) {
     if (hide && hide.has(im.id)) continue;
     drawObject(g, im, opt);
   }

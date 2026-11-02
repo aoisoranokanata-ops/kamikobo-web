@@ -177,7 +177,7 @@ class TextTool {
     if (!S) return;
     const page = S.page, q = S.q;
     const drag = Math.abs(S.cur.x - q.x) * v.s > 20;
-    const exist = !drag && (page.images || []).slice().reverse().find((o) => o.kind === 'text' && imageHit(o, q.x, q.y));
+    const exist = !drag && (page.images || []).slice().reverse().find((o) => o.kind === 'text' && v.note.layerShown(o) && imageHit(o, q.x, q.y));
     if (exist) { this.open(v, page, exist, false); return; }
     const o = this.opt, size = o.size;
     const w = drag ? Math.abs(S.cur.x - q.x) : Math.min(page.infinite ? 320 : page.w - q.x - 10, Math.max(160, size * 14));

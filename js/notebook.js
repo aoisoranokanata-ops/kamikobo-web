@@ -4,6 +4,19 @@
    ページの回転 rot（時計回り 0/90/180/270）は表示の向き。線は回転前のページ座標で持つ。 */
 
 const PAGE_GAP = 24;
+/* レイヤー（ノートごとに 1〜5）: 線・置いた物の layer（無ければ 1）。item.layers = {active, hidden:[…]}。
+   新しく書く物は active へ（strokesCmd・swapCmd・swapBoth で、前に無かった物に付ける）。上の番号ほど前に描く。
+   消しゴム・なげなわは active の物だけ、隠したレイヤーは描かない・当たらない・PDF にも出さない */
+const LAYER_COUNT = 5;
+function layerOf(o) { return o.layer || 1; }
+/* 見えている物だけを、レイヤーの順（1 が下）に。レイヤーを使っていなければ元の並びのまま */
+function layerView(note, list) {
+  if (!note || !list) return list || [];
+  const H = note.hiddenLayers;
+  let out = H.size ? list.filter((o) => !H.has(o.layer || 1)) : list;
+  if (out.some((o) => o.layer > 1)) out = out.slice().sort((a, b) => (a.layer || 1) - (b.layer || 1));
+  return out;
+}
 
 class Note {
   constructor(item, pages) {
@@ -17,6 +30,9 @@ class Note {
     this.version = 0;              // 表示のキャッシュの鍵
     this.listeners = [];
     this._known = new Set(pages.map((p) => p.id));     // 保存済みのページ（消えたら保存時に消す）
+    const L = item.layers || {};
+    this.activeLayer = clamp(L.active || 1, 1, LAYER_COUNT);
+    this.hiddenLayers = new Set((L.hidden || []).filter((k) => k !== this.activeLayer));
     this.layout();
   }
   get board() { return this.item.kind === 'board'; }
@@ -78,6 +94,21 @@ class Note {
   }
   pageIndex(p) { return this.pages.indexOf(p); }
 
+  // ---- レイヤー
+  saveLayers() {
+    this.item.layers = { active: this.activeLayer, hidden: [...this.hiddenLayers].sort() };
+    this.itemDirty = true;
+    this.touch(null);
+  }
+  layerEditable(o) { return layerOf(o) === this.activeLayer; }
+  layerShown(o) { return !this.hiddenLayers.has(layerOf(o)); }
+  /* 前に無かった物（新しく書いた・貼った・分かれた線）に今のレイヤーを付ける */
+  tagNew(before, after) {
+    if (this.activeLayer === 1) return;
+    const had = new Set(before.map((o) => o.id));
+    for (const o of after) if (!had.has(o.id) && o.layer === undefined) o.layer = this.activeLayer;
+  }
+
   // ---- 変更と履歴
   touch(page) {
     if (page) this.dirty.add(page.id);
@@ -87,6 +118,7 @@ class Note {
   /* 線の入れ替え（消した線・増えた線）。取り消しは逆の入れ替え */
   strokesCmd(page, removed, added, label = '書き込み') {
     if (!removed.length && !added.length) return;
+    this.tagNew(removed, added);
     const idx = removed.map((s) => page.strokes.indexOf(s));
     const cmd = {
       label,
@@ -107,12 +139,14 @@ class Note {
   }
   /* ページの線の並びを丸ごと入れ替える（消しゴム・なげなわ: 途中で何度も変えた結果をまとめて 1 回の取り消しに） */
   swapCmd(page, before, after, label) {
+    this.tagNew(before, after);
     const apply = (list) => { page.strokes = list.slice(); this.touch(page); };
     this.push({ label, redo: () => apply(after), undo: () => apply(before) }, false);
     apply(after);
   }
   /* 線と画像をいっしょに入れ替える（なげなわで画像も動かしたとき） */
   swapBoth(page, sBefore, sAfter, iBefore, iAfter, label) {
+    this.tagNew(sBefore, sAfter); this.tagNew(iBefore, iAfter);
     const apply = (s, i) => { page.strokes = s.slice(); page.images = i.slice(); this.touch(page); };
     this.push({ label, redo: () => apply(sAfter, iAfter), undo: () => apply(sBefore, iBefore) }, false);
     apply(sAfter, iAfter);

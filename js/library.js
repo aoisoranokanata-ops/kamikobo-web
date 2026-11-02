@@ -222,7 +222,7 @@ class Library {
       if (it.kind !== 'board') items.push({ label: 'ほかのノートと結合…', fn: () => this.mergeDialog(it) });
       items.push(null, { label: '📄 PDF に書き出す・共有', fn: () => this.exportPdfOf(it) });
       items.push({ label: '🗂 ファイルで書き出す（.kmkw）', fn: () => this.exportFileOf(it) });
-      if (it.kind !== 'board') items.push({ label: '🖍 マーカーした所を書き出す（箇条書き・表）', fn: async () => this.app.highlightsDialog((await Note.load(it)).pages, it.name, false) });
+      if (it.kind !== 'board') items.push({ label: '🖍 マーカーした所を書き出す（箇条書き・表）', fn: async () => { const nt = await Note.load(it); this.app.highlightsDialog(nt.pages, it.name, false, nt); } });
     }
     if (it.type === 'folder') {
       items.push({ label: '色…', fn: () => this.colorMenu(it, anchor) });
@@ -319,7 +319,7 @@ class Library {
   }
   async exportPdfOf(it) {
     const nt = await Note.load(it);
-    await this.app.exportPages(nt.board ? [boardAsPage(nt.pages[0])] : nt.pages, it.name);
+    await this.app.exportPages(nt.board ? [boardAsPage(nt.pages[0])] : nt.pages, it.name, { note: nt });
   }
   async exportFileOf(it) {
     const blob = await buildBackup([it.id], it.type === 'folder' ? 'folder' : 'note');
