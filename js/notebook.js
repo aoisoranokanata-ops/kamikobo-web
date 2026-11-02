@@ -217,7 +217,7 @@ function blankPage(item, id, like = null) {
   if (item.landscape) [w, h] = [h, w];
   const p = {
     id, noteId: item.id, w: like ? like.w : w, h: like ? like.h : h, rot: like ? like.rot || 0 : 0,
-    paper: like ? like.paper : { ...(item.paper || { type: 'ruled', color: 'white' }) },
+    paper: like && !isCoverPaper(like.paper) ? like.paper : { ...(item.paper || { type: 'ruled', color: 'white' }) },     // 表紙の後ろはふつうの用紙
     infinite: item.kind === 'board', strokes: [], images: [],
   };
   if (like && like.bg && like.bg.tpl) p.bg = { ...like.bg };      // 自作テンプレート（PDF）は次のページにも
@@ -244,22 +244,24 @@ function copyPage(p, noteId) {
 }
 
 /* 新しいノート（またはホワイトボード）を作って保存する */
-async function createNote({ name, parent, kind = 'paged', paper, size = 'A4', landscape = false, pages = 1 }) {
+/* cover = 1 ページ目の表紙の用紙（{type:'cv-…', color, accent, title}）。ほかのページは paper */
+async function createNote({ name, parent, kind = 'paged', paper, size = 'A4', landscape = false, pages = 1, cover = null }) {
   const now = Date.now();
   const item = { id: uid('n'), type: 'note', textV: TEXT_VER, kind, parent: parent || 'root', name: name || (kind === 'board' ? '無限キャンバス' : '無題のノート'),
     created: now, updated: now, trashed: false, paper: paper || { type: 'ruled', color: 'white' }, size, landscape, pageIds: [] };
   const list = [];
   for (let i = 0; i < (kind === 'board' ? 1 : Math.max(1, pages)); i++) list.push(blankPage(item, uid('p')));
+  if (cover && kind !== 'board') { const c = blankPage(item, uid('p')); c.paper = cover; list.unshift(c); }
   item.pageIds = list.map((p) => p.id);
   await Store.saveNote(item, list.map(pageRecord));
   return item;
 }
 
 /* 出来上がったページの並びから新しいノートを作る（PDF の読み込み・結合・抽出・分割） */
-async function createNoteFromPages({ name, parent, pages, paper, size, thumb }) {
+async function createNoteFromPages({ name, parent, pages, paper, size, landscape = false, thumb }) {
   const now = Date.now();
   const item = { id: uid('n'), type: 'note', textV: TEXT_VER, kind: 'paged', parent: parent || 'root', name: name || '無題のノート',
-    created: now, updated: now, trashed: false, paper: paper || { type: 'blank', color: 'white' }, size: size || 'A4', landscape: false, pageIds: [] };
+    created: now, updated: now, trashed: false, paper: paper || { type: 'blank', color: 'white' }, size: size || 'A4', landscape, pageIds: [] };
   for (const p of pages) { p.noteId = item.id; p.strokes = p.strokes || []; p.images = p.images || []; }
   item.pageIds = pages.map((p) => p.id);
   if (thumb) item.thumb = thumb;

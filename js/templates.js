@@ -1,6 +1,7 @@
 'use strict';
-/* テンプレート集: 勉強・仕事の用紙（議事録・習慣トラッカー・勉強ノート・2段・絵コンテ）、プランナー（年・月・週・日。祝日つき・ページ間リンク）、
-   自作テンプレート（PDF・画像から）、表紙。
+/* テンプレート集: 勉強・仕事の用紙（議事録・習慣トラッカー・勉強ノート・2段・絵コンテ）、週間・月間（日付なし・月曜はじまり）、
+   ミュージック（大譜表・ギタースコア・TAB 譜・コード表・歌詞とコード）、表紙のページ（paper.accent の色・paper.title の題名）、
+   プランナー（年・月・週・日。祝日つき・ページ間リンク）、自作テンプレート（PDF・画像から）、本棚のカードの表紙。
    用紙は「描く物の並び（display list）」で作る → 画面（canvas）と PDF（PdfCtx）が同じ物を描ける。リンクの場所も同じ計算から出す。 */
 
 const P_INK = { white: '#4b5260', cream: '#5e5440', gray: '#4f545c', dark: '#c4c9d2', green: '#466048' };
@@ -52,11 +53,12 @@ function dayColor(dt, ink) { return holidayName(dt) || dt.getDay() === 0 ? SUN :
 
 // ---- 描く物の並び
 class Lay {
-  constructor(pc) { this.els = []; this.links = []; this.ink = P_INK[pc.id] || P_INK.white; this.sub = P_SUB[pc.id] || P_SUB.white; this.line = pc.line; this.strong = pc.strong; }
+  constructor(pc) { this.els = []; this.links = []; this.ink = P_INK[pc.id] || P_INK.white; this.sub = P_SUB[pc.id] || P_SUB.white; this.line = pc.line; this.strong = pc.strong; this.bg = pc.bg; }
   text(text, x, y, size, color, opt = {}) { this.els.push({ t: 'text', text, x, y, size, color: color || this.ink, bold: !!opt.bold, align: opt.align || 'left' }); }
   lines(segs, color, w = 0.5) { this.els.push({ t: 'lines', segs, c: color || this.line, w }); }
   rect(x, y, w, h, opt = {}) { this.els.push({ t: 'rect', x, y, w, h, r: opt.r || 0, c: opt.c === undefined ? this.sub : opt.c, lw: opt.lw || 0.8, fill: opt.fill || null }); }
   link(x, y, w, h, to) { this.links.push({ rect: [x, y, w, h], to }); }
+  circle(x, y, r, fill) { this.els.push({ t: 'circle', x, y, r, fill }); }
   /* 罫線を y0〜y1 に step ごと */
   ruled(x0, x1, y0, y1, step, color) { const s = []; for (let y = y0; y <= y1 + 0.01; y += step) s.push(x0, y, x1, y); this.lines(s, color); }
   checkbox(x, y, s) { this.rect(x, y, s, s, { r: 1.5, c: this.sub, lw: 0.8 }); }
@@ -87,6 +89,8 @@ function drawLayout(g, L) {
       if (e.r) roundRectPath(g, e.x, e.y, e.w, e.h, e.r); else g.rect(e.x, e.y, e.w, e.h);
       if (e.fill) { g.fillStyle = e.fill; g.fill(); }
       if (e.c) { g.strokeStyle = e.c; g.lineWidth = e.lw; g.stroke(); }
+    } else if (e.t === 'circle') {
+      g.beginPath(); g.arc(e.x, e.y, e.r, 0, Math.PI * 2); g.fillStyle = e.fill; g.fill();
     } else if (e.t === 'text') {
       g.save();
       g.font = `${e.bold ? '700 ' : ''}${e.size}px ${FONT_FAMILIES.gothic.css}`;
@@ -171,6 +175,251 @@ const SHEETS = {
     }
   },
 };
+
+// ---- 週間・月間（日付なし。月曜はじまり）
+const WD_MON = ['月', '火', '水', '木', '金', '土', '日'];
+const wdColor = (k, ink) => (k === 5 ? SAT : k === 6 ? SUN : ink);
+function planHead(L, w, title, blank) {
+  L.text(title, TM, TM + 22, 20, L.ink, { bold: true });
+  L.text(blank, w - TM, TM + 22, 10, L.sub, { align: 'right' });
+  L.lines([TM, TM + 32, w - TM, TM + 32], L.strong, 0.9);
+}
+const PLAN_SHEETS = {
+  /* 週間: 月〜日を縦に 7 段、右に ToDo・メモ */
+  'w-plan'(L, w, h) {
+    planHead(L, w, '週間プラン', '　　年　　月　　日（月）〜　　月　　日（日）');
+    const gy = TM + 42;
+    L.rect(TM, gy, w - TM * 2, 40, { r: 4 });
+    L.text('今週の目標', TM + 8, gy + 15, 10, L.ink, { bold: true });
+    const y0 = gy + 52, H0 = h - TM - y0, lw = (w - TM * 2) * 0.64, rx = TM + lw + 10, rw = w - TM - rx, rh = H0 / 7, dw = 38;
+    L.rect(TM, y0, lw, H0, { r: 4 });
+    const segs = [TM + dw, y0, TM + dw, y0 + H0];
+    for (let k = 0; k < 7; k++) {
+      const y = y0 + k * rh;
+      if (k) segs.push(TM, y, TM + lw, y);
+      L.text(WD_MON[k], TM + dw / 2, y + 19, 13, wdColor(k, L.ink), { bold: true, align: 'center' });
+      L.text('／', TM + dw / 2, y + 36, 9, L.sub, { align: 'center' });
+      L.ruled(TM + dw + 6, TM + lw - 6, y + 22, y + rh - 4, 20);
+    }
+    L.lines(segs, L.sub, 0.7);
+    const th = H0 * 0.56;
+    L.rect(rx, y0, rw, th, { r: 4 });
+    L.text('ToDo', rx + 8, y0 + 15, 10, L.ink, { bold: true });
+    for (let yy = y0 + 38; yy < y0 + th - 6; yy += 22) { L.checkbox(rx + 8, yy - 11, 9); L.lines([rx + 22, yy, rx + rw - 8, yy], L.line, 0.5); }
+    L.rect(rx, y0 + th + 8, rw, H0 - th - 8, { r: 4 });
+    L.text('メモ', rx + 8, y0 + th + 23, 10, L.ink, { bold: true });
+    L.ruled(rx + 8, rx + rw - 8, y0 + th + 44, y0 + H0 - 4, 20);
+  },
+  /* 週間: 月〜日を横に 7 列、下に目標・メモ */
+  'w-plan-col'(L, w, h) {
+    planHead(L, w, '週間プラン', '　　年　　月　　日（月）〜　　月　　日（日）');
+    const y0 = TM + 42, memo = (h - TM - y0) * 0.2, gh = h - TM - y0 - memo - 10, cw = (w - TM * 2) / 7, hd = 30;
+    L.rect(TM, y0, w - TM * 2, gh, { r: 4 });
+    const segs = [TM, y0 + hd, w - TM, y0 + hd];
+    for (let k = 0; k < 7; k++) {
+      const x = TM + k * cw;
+      if (k) segs.push(x, y0, x, y0 + gh);
+      L.text(WD_MON[k], x + 8, y0 + 19, 12, wdColor(k, L.ink), { bold: true });
+      L.text('／', x + cw - 8, y0 + 19, 9, L.sub, { align: 'right' });
+      L.ruled(x + 4, x + cw - 4, y0 + hd + 22, y0 + gh - 4, 22);
+    }
+    L.lines(segs, L.sub, 0.7);
+    const my = y0 + gh + 10, half = (w - TM * 2 - 10) / 2;
+    L.rect(TM, my, half, memo, { r: 4 }); L.text('今週の目標', TM + 8, my + 15, 10, L.ink, { bold: true }); L.ruled(TM + 8, TM + half - 8, my + 36, my + memo - 4, 20);
+    L.rect(TM + half + 10, my, half, memo, { r: 4 }); L.text('メモ', TM + half + 18, my + 15, 10, L.ink, { bold: true }); L.ruled(TM + half + 18, w - TM - 8, my + 36, my + memo - 4, 20);
+  },
+  /* 月間: 月曜はじまりのカレンダー（6 週）＋目標・メモ */
+  'm-plan'(L, w, h) {
+    planHead(L, w, '月間プラン', '　　　年　　　月');
+    const gy = TM + 42;
+    L.rect(TM, gy, w - TM * 2, 40, { r: 4 });
+    L.text('今月の目標', TM + 8, gy + 15, 10, L.ink, { bold: true });
+    const y0 = gy + 52, port = h > w, memo = port ? (h - TM - y0) * 0.24 : 0, gh = h - TM - y0 - (memo ? memo + 10 : 0), hd = 20, cw = (w - TM * 2) / 7, rh = (gh - hd) / 6;
+    const segs = [];
+    for (let r = 0; r <= 6; r++) segs.push(TM, y0 + hd + r * rh, w - TM, y0 + hd + r * rh);
+    for (let k = 0; k <= 7; k++) segs.push(TM + k * cw, y0 + hd, TM + k * cw, y0 + gh);
+    L.lines(segs, L.sub, 0.7);
+    for (let k = 0; k < 7; k++) L.text(WD_MON[k], TM + k * cw + cw / 2, y0 + 14, 10, wdColor(k, L.sub), { bold: true, align: 'center' });
+    for (let r = 0; r < 6; r++) for (let k = 0; k < 7; k++) L.rect(TM + k * cw + 4, y0 + hd + r * rh + 4, 16, 14, { r: 2, c: L.line, lw: 0.6 });     // 日付を書く枠
+    if (memo) {
+      const my = y0 + gh + 10;
+      L.rect(TM, my, w - TM * 2, memo, { r: 4 });
+      L.text('メモ', TM + 8, my + 15, 10, L.ink, { bold: true });
+      L.ruled(TM + 8, w - TM - 8, my + 36, my + memo - 4, 20);
+    }
+  },
+  /* 月間: 1〜31 日の一覧（曜日・予定・チェック） */
+  'm-list'(L, w, h) {
+    planHead(L, w, '月間リスト', '　　　年　　　月');
+    const y0 = TM + 44, rh = (h - TM - y0) / 32, c1 = TM + 30, c2 = c1 + 30, c3 = w - TM - 26;
+    L.text('日', TM + 15, y0 + rh * 0.7, 9, L.sub, { align: 'center', bold: true });
+    L.text('曜', c1 + 15, y0 + rh * 0.7, 9, L.sub, { align: 'center', bold: true });
+    L.text('予定・やること', c2 + 8, y0 + rh * 0.7, 9, L.sub, { bold: true });
+    L.text('✓', c3 + 13, y0 + rh * 0.7, 9, L.sub, { align: 'center', bold: true });
+    const segs = [c1, y0, c1, h - TM, c2, y0, c2, h - TM, c3, y0, c3, h - TM];
+    for (let r = 1; r <= 32; r++) segs.push(TM, y0 + r * rh, w - TM, y0 + r * rh);
+    L.lines(segs, L.line, 0.6);
+    L.rect(TM, y0, w - TM * 2, h - TM - y0, { r: 3 });
+    for (let d = 1; d <= 31; d++) L.text(String(d), TM + 15, y0 + d * rh + rh * 0.68, Math.min(10, rh * 0.6), L.ink, { align: 'center' });
+  },
+};
+
+// ---- ミュージック（五線譜は paper.js の 'music'）
+function staffLines(L, x0, x1, y, gap, n, color, lw = 0.6) {
+  const s = [];
+  for (let k = 0; k < n; k++) s.push(x0, y + k * gap, x1, y + k * gap);
+  L.lines(s, color, lw);
+  return y + (n - 1) * gap;
+}
+/* TAB の字（線の上に紙の色を敷いてから縦に T・A・B） */
+function tabLetters(L, x, y, gap) {
+  const sz = Math.min(gap * 1.3, 11);
+  L.rect(x - sz * 0.55, y + gap * 0.25, sz * 1.1, gap * 4.5, { fill: L.bg, c: null });
+  ['T', 'A', 'B'].forEach((c, i) => L.text(c, x, y + gap * (1 + i * 1.5) + sz * 0.36, sz, L.ink, { bold: true, align: 'center' }));
+}
+function songHead(L, w, extra) {
+  const M = 14 * MM;
+  L.text('曲名', M, TM + 18, 9, L.sub);
+  L.lines([M + 26, TM + 20, w * 0.62, TM + 20], L.sub, 0.6);
+  let x = w * 0.62 + 14;
+  for (const f of extra) { L.text(f, x, TM + 18, 9, L.sub); x += f.length * 9 + 4; L.lines([x, TM + 20, x + 44, TM + 20], L.sub, 0.6); x += 54; }
+  return TM + 40;
+}
+const MUSIC_SHEETS = {
+  /* 大譜表（ピアノ）: ト音・ヘ音の 2 段をかっこでつなぐ */
+  'music-grand'(L, w, h) {
+    const M = 14 * MM, gap = 2.1 * MM, staff = gap * 4, mid = 9 * MM, sys = staff * 2 + mid, space = 12 * MM;
+    for (let y = songHead(L, w, ['作曲']) + 8; y + sys < h - 10 * MM; y += sys + space) {
+      staffLines(L, M, w - M, y, gap, 5, L.ink);
+      staffLines(L, M, w - M, y + staff + mid, gap, 5, L.ink);
+      L.lines([M, y, M, y + sys, w - M, y, w - M, y + sys], L.ink, 0.8);
+      L.lines([M - 5, y - 1, M - 5, y + sys + 1], L.ink, 2.2);          // かっこ
+    }
+  },
+  /* ギタースコア: 五線＋TAB（6 線）を 1 組に */
+  'music-guitar'(L, w, h) {
+    const M = 14 * MM, g1 = 2.0 * MM, g2 = 2.3 * MM, s1 = g1 * 4, s2 = g2 * 5, mid = 5.5 * MM, sys = s1 + mid + s2, space = 11 * MM;
+    for (let y = songHead(L, w, ['キー', 'テンポ']) + 8; y + sys < h - 10 * MM; y += sys + space) {
+      staffLines(L, M, w - M, y, g1, 5, L.ink);
+      const ty = y + s1 + mid;
+      staffLines(L, M, w - M, ty, g2, 6, L.ink, 0.5);
+      tabLetters(L, M + 8, ty, g2);
+      L.lines([M, y, M, y + sys, w - M, y, w - M, y + s1, w - M, ty, w - M, ty + s2], L.ink, 0.8);
+    }
+  },
+  /* TAB 譜（6 線） */
+  'music-tab'(L, w, h) {
+    const M = 14 * MM, gap = 2.6 * MM, st = gap * 5, space = 12 * MM;
+    for (let y = songHead(L, w, ['チューニング']) + 8; y + st < h - 10 * MM; y += st + space) {
+      staffLines(L, M, w - M, y, gap, 6, L.ink, 0.5);
+      tabLetters(L, M + 8, y, gap);
+      L.lines([M, y, M, y + st, w - M, y, w - M, y + st], L.ink, 0.8);
+    }
+  },
+  /* コード表: ギターのコードダイアグラム（6 弦 × 5 フレット）を並べる */
+  'music-chord'(L, w, h) {
+    const M = 14 * MM, y0 = songHead(L, w, []) + 4, cols = w > h ? 7 : 5, cw = (w - M * 2) / cols;
+    const sp = Math.min(cw * 0.62 / 5, 9.5), fr = sp * 1.3, dh = fr * 5, rh = dh + 44, rows = Math.max(1, Math.floor((h - 10 * MM - y0) / rh));
+    for (let r = 0; r < rows; r++) for (let c = 0; c < cols; c++) {
+      const x = M + c * cw + (cw - sp * 5) / 2, y = y0 + r * rh + 26;
+      L.lines([x + sp * 0.4, y - 10, x + sp * 4.6, y - 10], L.sub, 0.6);       // コード名を書く線
+      const s = [];
+      for (let k = 0; k < 6; k++) s.push(x + k * sp, y, x + k * sp, y + dh);
+      for (let f = 1; f <= 5; f++) s.push(x, y + f * fr, x + sp * 5, y + f * fr);
+      L.lines(s, L.ink, 0.6);
+      L.lines([x, y, x + sp * 5, y], L.ink, 2);                           // ナット
+    }
+  },
+  /* 歌詞とコード: コードを書く細い行＋歌詞の行 */
+  'music-lyric'(L, w, h) {
+    const M = 14 * MM, y0 = songHead(L, w, ['キー', 'カポ']) + 10;
+    for (let y = y0; y + 34 < h - 10 * MM; y += 40) {
+      L.lines([M, y + 12, w - M, y + 12], L.line, 0.4);
+      L.lines([M, y + 34, w - M, y + 34], L.sub, 0.7);
+    }
+  },
+};
+
+// ---- 表紙のページ（paper.accent の色、paper.title の題名。題名が無ければ手書き用の線）
+const COVER_ACCENTS = [
+  { c: '#2f4b7c', label: '紺' }, { c: '#b8453f', label: '赤' }, { c: '#3f7d5a', label: '緑' }, { c: '#8a6440', label: '茶' },
+  { c: '#4a90c2', label: '水色' }, { c: '#d07a95', label: 'ピンク' }, { c: '#6b5b95', label: '紫' }, { c: '#3a3d42', label: '黒' },
+];
+function mixColor(hex, t) {         // 白と混ぜる（t = 0 のまま〜1 で白）
+  const [r, g, b] = hexToRgb(hex);
+  const f = (v) => Math.round(v + (255 - v) * t).toString(16).padStart(2, '0');
+  return '#' + f(r) + f(g) + f(b);
+}
+function coverTitle(L, P, cx, cy, maxW, color, opt = {}) {
+  const t = (P.title || '').trim();
+  if (!t) { L.lines([cx - maxW / 2, cy + 8, cx + maxW / 2, cy + 8], color, 0.8); return; }
+  const units = [...t].reduce((n, ch) => n + (/[\x20-\x7e]/.test(ch) ? 0.58 : 1), 0);
+  const size = Math.max(12, Math.min(opt.max || 34, maxW / Math.max(1, units)));
+  L.text(t, opt.left ? cx - maxW / 2 : cx, cy + size * 0.36, size, color, { bold: true, align: opt.left ? 'left' : 'center' });
+}
+function coverFields(L, x0, x1, y, color, sub) {
+  L.text('No.', x0, y, 9, sub); L.lines([x0 + 22, y + 3, x0 + 80, y + 3], color, 0.7);
+  L.text('名前', x0 + 96, y, 9, sub); L.lines([x0 + 120, y + 3, x1, y + 3], color, 0.7);
+  L.text('期間', x0, y + 30, 9, sub);
+  L.text('　　年　　月　　日 〜 　　年　　月　　日', x0 + 28, y + 30, 10, sub);
+}
+const COVER_SHEETS = {
+  /* 帯: 上に色の帯、題名は白で */
+  'cv-band'(L, w, h, P) {
+    const a = P.accent || COVER_ACCENTS[0].c, bh = h * 0.42;
+    L.rect(0, 0, w, bh, { fill: a, c: null });
+    L.lines([w * 0.18, bh * 0.72, w * 0.82, bh * 0.72], '#ffffff', 0.8);
+    coverTitle(L, P, w / 2, bh * 0.56, w * 0.7, '#ffffff');
+    L.lines([0, bh + 6, w, bh + 6], a, 2);
+    coverFields(L, w * 0.18, w * 0.82, h * 0.72, a, L.sub);
+  },
+  /* ラベル: 全体が色、真ん中に白いラベル */
+  'cv-label'(L, w, h, P) {
+    const a = P.accent || COVER_ACCENTS[0].c, lw = w * 0.66, lh = h * 0.3, lx = (w - lw) / 2, ly = h * 0.26;
+    L.rect(0, 0, w, h, { fill: a, c: null });
+    L.rect(lx, ly, lw, lh, { r: 10, fill: '#ffffff', c: null });
+    L.rect(lx + 6, ly + 6, lw - 12, lh - 12, { r: 7, c: a, lw: 0.8 });
+    coverTitle(L, P, w / 2, ly + lh * 0.38, lw * 0.8, '#2b2d31');
+    coverFields(L, lx + 22, lx + lw - 22, ly + lh * 0.7, a, '#7a7f88');
+  },
+  /* 枠: 二重の枠と真ん中の題名 */
+  'cv-frame'(L, w, h, P) {
+    const a = P.accent || COVER_ACCENTS[0].c;
+    L.rect(20, 20, w - 40, h - 40, { c: a, lw: 2.4 });
+    L.rect(28, 28, w - 56, h - 56, { c: a, lw: 0.8 });
+    coverTitle(L, P, w / 2, h * 0.36, w * 0.66, a);
+    L.lines([w * 0.3, h * 0.36 + 34, w * 0.7, h * 0.36 + 34], a, 0.8);
+    L.circle(w / 2, h * 0.36 + 34, 3, a);
+    coverFields(L, w * 0.2, w * 0.8, h * 0.76, a, L.sub);
+  },
+  /* ストライプ: 左に色の帯、題名は左寄せ */
+  'cv-stripe'(L, w, h, P) {
+    const a = P.accent || COVER_ACCENTS[0].c, sw = w * 0.2;
+    L.rect(0, 0, sw, h, { fill: a, c: null });
+    L.rect(sw + 6, 0, 3, h, { fill: mixColor(a, 0.45), c: null });
+    const x0 = sw + 34, tw = w - x0 - 40;
+    coverTitle(L, P, x0 + tw / 2, h * 0.38, tw, a, { left: true });
+    L.lines([x0, h * 0.38 + 30, w - 40, h * 0.38 + 30], a, 1.2);
+    coverFields(L, x0, w - 40, h * 0.8, a, L.sub);
+  },
+  /* ドット: 水玉の上に白いラベル */
+  'cv-dots'(L, w, h, P) {
+    const a = P.accent || COVER_ACCENTS[0].c, dc = mixColor(a, 0.55), st = 24;
+    for (let r = 0, y = 12; y < h; r++, y += st) for (let x = (r % 2) * st / 2 + 12; x < w; x += st) L.circle(x, y, 3.2, dc);
+    const lw = w * 0.64, lh = h * 0.28, lx = (w - lw) / 2, ly = h * 0.3;
+    L.rect(lx, ly, lw, lh, { r: 12, fill: '#ffffff', c: a, lw: 1.4 });
+    coverTitle(L, P, w / 2, ly + lh * 0.38, lw * 0.8, a);
+    coverFields(L, lx + 22, lx + lw - 22, ly + lh * 0.7, a, '#7a7f88');
+  },
+  /* シンプル: 大きな題名と線だけ */
+  'cv-simple'(L, w, h, P) {
+    const a = P.accent || COVER_ACCENTS[0].c, x0 = 44;
+    coverTitle(L, P, w / 2, h * 0.3, w - x0 * 2, a, { left: true, max: 40 });
+    L.lines([x0, h * 0.3 + 30, w - x0, h * 0.3 + 30], a, 2);
+    coverFields(L, x0, w - x0, h - 90, a, L.sub);
+  },
+};
+function isCoverPaper(paper) { return !!(paper && COVER_SHEETS[paper.type]); }
 
 // ---- プランナー
 function plannerHeaderNav(kind, dt) {
@@ -267,9 +516,9 @@ const PLANNER = {
 /* 用紙の並び（キャッシュ）。テンプレートの種類でなければ null */
 const _layCache = new Map();
 function templateLayout(pg, pc) {
-  const P = pg.paper || {}, fn = SHEETS[P.type] || PLANNER[P.type];
+  const P = pg.paper || {}, fn = SHEETS[P.type] || PLAN_SHEETS[P.type] || MUSIC_SHEETS[P.type] || COVER_SHEETS[P.type] || PLANNER[P.type];
   if (!fn) return null;
-  const key = `${P.type}|${pc.id}|${pg.w}|${pg.h}|${P.y}|${P.m}|${P.d}`;
+  const key = `${P.type}|${pc.id}|${pg.w}|${pg.h}|${P.y}|${P.m}|${P.d}|${P.accent}|${P.title}`;
   let L = _layCache.get(key);
   if (!L) {
     L = new Lay(pc);

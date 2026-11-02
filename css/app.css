@@ -361,3 +361,7 @@ label.row.tm-warn { margin: 0 10px 0 0; }
 .seg { display: inline-flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
 .seg button { border: none; border-radius: 0; min-width: 56px; background: var(--panel2); }
 .seg button.on { background: var(--accent); color: #fff; font-weight: 600; }
+
+/* ---- 1.10 表紙のページ */
+.tpl.cv-none { width: 84px; min-height: 0; align-self: stretch; }
+.tpl.cv-none b { font-size: 22px; color: var(--muted); }

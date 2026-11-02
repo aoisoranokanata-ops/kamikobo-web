@@ -909,16 +909,24 @@ class App {
   }
 
   // ================= ダイアログ
-  /* 用紙を選ぶ一覧（基本・勉強・仕事・自作）。state = {cat, type, color, tpl}。onPick で選んだ時に呼ぶ */
+  /* 用紙を選ぶ一覧（基本・勉強・仕事・週間・月間・ミュージック・表紙・自作・プランナー）。
+     state = {cat, type, color, tpl, accent, title, planner（プランナーの欄を出す）, noCover（表紙の欄を出さない）}。onChange で選んだ時に呼ぶ */
   tplPicker(state, getSize, onChange) {
     const box = el('div', {});
     const tabs = el('div', { class: 'tpl-tabs' });
     const grid = el('div', { class: 'tpl-grid' });
-    const cats = [['basic', '基本'], ['study', '勉強・仕事'], ['custom', '自作']].concat(state.planner ? [['planner', 'プランナー']] : []);
+    const extra = el('div', {});
+    const cats = [['basic', '基本'], ['study', '勉強・仕事'], ['plan', '週間・月間'], ['music', 'ミュージック']]
+      .concat(state.noCover ? [] : [['cover', '表紙']], [['custom', '自作']], state.planner ? [['planner', 'プランナー（日付入り）']] : []);
+    state.accent = state.accent || COVER_ACCENTS[0].c;
+    const title = el('input', { type: 'text', class: 'wide', value: state.title || '', placeholder: '空なら手で書く線' });
+    title.addEventListener('change', () => { state.title = title.value.trim(); draw(); });
     const draw = () => {
       tabs.innerHTML = '';
       for (const [k, label] of cats) tabs.append(el('button', { class: 'chip' + (state.cat === k ? ' on' : ''), onclick: () => { state.cat = k; draw(); onChange && onChange(); } }, label));
       grid.innerHTML = '';
+      extra.innerHTML = '';
+      if (state.cat === 'cover') extra.append(el('div', { class: 'field' }, '表紙の色', this.accentRow(state, draw)), el('label', { class: 'field' }, '表紙の題名', title));
       const [size, land] = getSize();
       if (state.cat === 'custom') {
         for (const t of MyTemplates.list()) {
@@ -939,7 +947,7 @@ class App {
       } else {
         for (const t of PAPER_TYPES.filter((x) => x.cat === state.cat)) {
           const c = el('canvas', { width: 96, height: 128 });
-          paperPreview(c, { type: t.id, color: state.color }, size, land);
+          paperPreview(c, { type: t.id, color: state.color, accent: state.accent, title: state.title }, size, land);
           const b = el('button', { class: 'tpl' + (t.id === state.type ? ' on' : '') }, c, el('span', {}, t.label));
           b.addEventListener('click', () => { state.type = t.id; draw(); onChange && onChange(); });
           grid.append(b);
@@ -947,9 +955,20 @@ class App {
       }
     };
     draw();
-    box.append(tabs, grid);
+    box.append(tabs, grid, extra);
     box.redraw = draw;
     return box;
+  }
+  /* 表紙の色 */
+  accentRow(state, redraw) {
+    const row = el('div', { class: 'tpl-colors' });
+    const draw = () => {
+      row.innerHTML = '';
+      for (const a of COVER_ACCENTS) row.append(el('button', { class: 'pcolor' + (a.c === state.accent ? ' on' : ''), style: { '--c': a.c }, title: a.label,
+        onclick: () => { state.accent = a.c; draw(); redraw(); } }));
+    };
+    draw();
+    return row;
   }
   colorRow(state, redraw) {
     const colors = el('div', { class: 'tpl-colors' });
@@ -992,7 +1011,9 @@ class App {
       await this.openNote(item.id);
       return;
     }
-    const state = { cat: st.cat === 'planner' ? 'planner' : st.cat || 'basic', type: st.type, color: st.color, tpl: null, planner: true, cover: null };
+    const state = { cat: st.cat === 'planner' ? 'planner' : st.cat || 'basic', type: st.type, color: st.color, tpl: null, planner: true, noCover: true, cover: null,
+      coverPage: st.coverPage || null, accent: st.accent || COVER_ACCENTS[0].c };
+    if (!PAPER_TYPES.some((t) => t.cat === state.cat) && !['planner', 'custom'].includes(state.cat)) state.cat = 'basic';
     const now = new Date();
     const pYear = el('select', {}, ...[now.getFullYear() - 1, now.getFullYear(), now.getFullYear() + 1, now.getFullYear() + 2].map((y) => el('option', { value: y, selected: y === (now.getMonth() >= 9 ? now.getFullYear() + 1 : now.getFullYear()) }, y + ' 年')));
     const pMonth = el('select', {}, ...Array.from({ length: 12 }, (_, i) => el('option', { value: i }, (i + 1) + ' 月から')));
@@ -1006,8 +1027,23 @@ class App {
     const plannerOpts = el('div', { class: 'field planner-opts' }, el('div', { class: 'row-buttons' }, pYear, pMonth), el('div', { class: 'row-buttons' }, ...partBoxes));
     const coverBtn = el('button', { class: 'chip', onclick: async () => {
       const v = await coverDialog(state.cover, name.value.trim() || 'ノート');
-      if (v !== undefined) { state.cover = v; coverBtn.textContent = v ? '表紙: あり' : '表紙: 1 ページ目'; }
-    } }, '表紙: 1 ページ目');
+      if (v !== undefined) { state.cover = v; coverBtn.textContent = v ? '本棚のカード: 色・柄' : '本棚のカード: 1 ページ目'; }
+    } }, '本棚のカード: 1 ページ目');
+    // 表紙のページ（1 ページ目）: 題名はノートの名前（無題なら手で書く線）
+    const cvTitle = () => { const v = name.value.trim(); return /^無題/.test(v) ? '' : v; };
+    const cvGrid = el('div', { class: 'tpl-grid' });
+    const accentWrap = el('div', { class: 'field' }, '表紙の色', this.accentRow(state, () => drawCv()));
+    const drawCv = () => {
+      cvGrid.innerHTML = '';
+      cvGrid.append(el('button', { class: 'tpl add cv-none' + (!state.coverPage ? ' on' : ''), onclick: () => { state.coverPage = null; drawCv(); } }, el('b', {}, '—'), el('span', {}, 'なし')));
+      for (const t of PAPER_TYPES.filter((x) => x.cat === 'cover')) {
+        const c = el('canvas', { width: 96, height: 128 });
+        paperPreview(c, { type: t.id, color: state.color, accent: state.accent, title: cvTitle() }, size.value, land.checked);
+        cvGrid.append(el('button', { class: 'tpl' + (state.coverPage === t.id ? ' on' : ''), onclick: () => { state.coverPage = t.id; drawCv(); } }, c, el('span', {}, t.label)));
+      }
+      accentWrap.hidden = !state.coverPage;
+    };
+    name.addEventListener('change', drawCv);
     let picker;
     const sizeRow = el('div', { class: 'field row' }, '大きさ ', size, el('label', { class: 'row inline' }, land, ' 横向き'), count);
     const sync = () => {
@@ -1018,39 +1054,44 @@ class App {
     };
     picker = this.tplPicker(state, () => [size.value, land.checked], sync);
     pYear.addEventListener('change', () => { if (/プランナー$/.test(name.value)) name.value = `${pYear.value}年 プランナー`; });
-    size.addEventListener('change', () => picker.redraw());
-    land.addEventListener('change', () => picker.redraw());
+    size.addEventListener('change', () => { picker.redraw(); drawCv(); });
+    land.addEventListener('change', () => { picker.redraw(); drawCv(); });
     const body = el('div', { class: 'newnote' },
       el('label', { class: 'field' }, '名前', name),
       el('div', { class: 'field' }, '用紙・テンプレート', picker),
       plannerOpts,
-      el('div', { class: 'field' }, '紙の色', this.colorRow(state, () => picker.redraw())),
+      el('div', { class: 'field' }, '紙の色', this.colorRow(state, () => { picker.redraw(); drawCv(); })),
       sizeRow,
+      el('div', { class: 'field' }, '表紙のページ（1 ページ目に入れる。題名はノートの名前）', cvGrid),
+      accentWrap,
       el('div', { class: 'field row' }, coverBtn));
+    drawCv();
     sync();
     const ok = await modal('新しいノート', body, [{ label: 'キャンセル', value: null },
       { label: '作る', primary: true, value: 'ok', check: () => (state.cat !== 'custom' || state.tpl ? true : (toast('テンプレートを選ぶか、PDF・画像から作ってください'), false)) }], { wide: true });
     if (ok !== 'ok') return;
     const landscape = land.checked;
-    saveJSON('newnote', { type: state.type, color: state.color, size: size.value, landscape, cat: state.cat, pMonth: +pMonth.value,
+    saveJSON('newnote', { type: state.type, color: state.color, size: size.value, landscape, cat: state.cat, pMonth: +pMonth.value, coverPage: state.coverPage, accent: state.accent,
       parts: Object.fromEntries(Object.entries(parts).map(([k, c]) => [k, c.checked])) });
     const parent = this.library.currentFolderForNew(), nm = name.value.trim() || undefined;
+    const coverPaper = state.coverPage ? { type: state.coverPage, color: state.color, accent: state.accent, title: cvTitle() } : null;
+    const withCover = (pages) => (coverPaper && pages.length ? [{ id: uid('p'), w: pages[0].w, h: pages[0].h, rot: 0, infinite: false, paper: coverPaper, strokes: [], images: [] }, ...pages] : pages);
     let item;
     if (state.cat === 'planner') {
       const P = Object.fromEntries(Object.entries(parts).map(([k, c]) => [k, c.checked]));
       if (!P.year && !P.month && !P.week && !P.day) { toast('作るページを選んでください', { error: true }); return; }
       let [w, h] = PAGE_SIZES[size.value] || PAGE_SIZES.A4;
       if (landscape) [w, h] = [h, w];
-      const pages = buildPlanner({ year: +pYear.value, month: +pMonth.value, parts: P, w, h, color: state.color });
-      item = await createNoteFromPages({ name: nm || `${pYear.value}年 プランナー`, parent, pages, size: size.value, paper: { type: 'p-day', color: state.color } });
+      const pages = withCover(buildPlanner({ year: +pYear.value, month: +pMonth.value, parts: P, w, h, color: state.color }));
+      item = await createNoteFromPages({ name: nm || `${pYear.value}年 プランナー`, parent, pages, size: size.value, landscape, paper: { type: 'p-day', color: state.color } });
       toast(`${pages.length} ページのプランナーを作りました。日付や「年間・月・週」を指でタップすると移動します`, { ms: 5000 });
     } else if (state.cat === 'custom') {
       const t = MyTemplates.list().find((x) => x.id === state.tpl);
       if (!t) return;
-      const pages = Array.from({ length: +count.value }, () => MyTemplates.page(t, state.color));
+      const pages = withCover(Array.from({ length: +count.value }, () => MyTemplates.page(t, state.color)));
       item = await createNoteFromPages({ name: nm, parent, pages });
     } else {
-      item = await createNote({ name: nm, parent, kind, paper: { type: state.type, color: state.color }, size: size.value, landscape, pages: +count.value });
+      item = await createNote({ name: nm, parent, kind, paper: { type: state.type, color: state.color }, size: size.value, landscape, pages: +count.value, cover: coverPaper });
     }
     if (state.cover) { item.cover = state.cover; await Store.putItem(item); }
     await this.library.refresh();
@@ -1063,7 +1104,8 @@ class App {
     const p = this.currentPage();
     const cur = p.paper || {};
     const pt = PAPER_TYPES.find((x) => x.id === cur.type);
-    const state = { cat: pt && (pt.cat === 'basic' || pt.cat === 'study') ? pt.cat : 'basic', type: cur.type, color: cur.color || 'white', tpl: null };
+    const state = { cat: pt && ['basic', 'study', 'plan', 'music', 'cover'].includes(pt.cat) ? pt.cat : 'basic', type: cur.type, color: cur.color || 'white', tpl: null,
+      accent: cur.accent, title: cur.title !== undefined ? cur.title : /^無題/.test(n.item.name) ? '' : n.item.name };
     if (n.board) {
       const types = el('div', { class: 'tpl-grid' });
       const draw = () => {
@@ -1096,6 +1138,7 @@ class App {
       return;
     }
     const paper = { type: state.type, color: state.color };
+    if (isCoverPaper(paper)) Object.assign(paper, { accent: state.accent, title: state.title || '' });
     if (v === 'add') { n.addPage(i + 1, null, paper); this.afterPageChange(); this.view.goToPage(i + 1); return; }
     n.setPaper(v === 'all' ? n.pages.slice() : [p], paper);
     if (v === 'all') { n.item.paper = paper; n.itemDirty = true; }
