@@ -409,13 +409,13 @@ function scanProcess(src, quad, o, max, cache, noCrop = false) {
 const SCAN_DEFAULTS = { mode: 'doc', snap: true, deskew: true, fingers: true, book: false, split: false, bright: 0, contrast: 0 };
 const SCAN_PREVIEW = 1100;     // 仕上げの下見の長い辺（px）
 const Scanner = {
-  /* 撮ったページ [{blob, w, h}] を返す（やめたら []） */
-  open(title = '書類をスキャン') {
+  /* 撮ったページ [{blob, w, h}] を返す（やめたら []）。opt.files = 最初から直す写真、opt.once = 1 枚入れたら閉じる（まとめて PDF の「手で直す」） */
+  open(title = '書類をスキャン', opt = {}) {
     return new Promise((resolve) => {
-      const o = loadJSON('scan', SCAN_DEFAULTS);
+      const o = { ...loadJSON('scan', SCAN_DEFAULTS), split: false };      // 見開きを分けるのは、その時だけ（覚えておくと次の書類まで半分に切ってしまう）
       // state: 'empty'（撮る前）| 'corners'（四隅）| 'review'（仕上げ）
-      const S = { state: 'empty', pages: [], cur: null, quad: null, queue: [], drag: -1, busy: false, cache: {}, tilt: 0, crop: null, prev: null, msg: '' };
-      const saveOpt = () => saveJSON('scan', { mode: o.mode, snap: o.snap, deskew: o.deskew, fingers: o.fingers, book: o.book, split: o.split, bright: o.bright, contrast: o.contrast });
+      const S = { state: 'empty', pages: [], cur: null, quad: null, queue: [...(opt.files || [])], drag: -1, busy: false, cache: {}, tilt: 0, crop: null, prev: null, msg: '' };
+      const saveOpt = () => saveJSON('scan', { mode: o.mode, snap: o.snap, deskew: o.deskew, fingers: o.fingers, book: o.book, split: false, bright: o.bright, contrast: o.contrast });
       const head = el('div', { class: 'scan-head' }, el('b', {}, title));
       const count = el('span', { class: 'muted' });
       const done = el('button', { class: 'primary' });
@@ -550,8 +550,8 @@ const Scanner = {
           hint.append(
             el('button', { class: 'primary scan-big', disabled: S.busy, onclick: () => take(true) }, S.pages.length ? '📷 次のページを撮る' : '📷 カメラで撮る'),
             el('button', { class: 'scan-big', disabled: S.busy, onclick: () => take(false) }, '🖼 写真から選ぶ（1 枚ずつ直す）'),
-            el('button', { class: 'scan-big', disabled: S.busy, onclick: () => batch() }, '⚡ 写真をまとめて自動で'),
-            el('p', { class: 'muted small' }, S.msg || '書類を暗めの机などに置いて真上から撮ると、四隅が合いやすくなります。「まとめて自動で」は四隅・傾き・指・明るさを全部おまかせで仕上げます（今の仕上げの設定で）。'));
+            el('button', { class: 'scan-big', disabled: S.busy, onclick: () => batch() }, '⚡ 写真をまとめて（選んで自動補正）'),
+            el('p', { class: 'muted small' }, S.msg || '書類を暗めの机などに置いて真上から撮ると、四隅が合いやすくなります。「写真をまとめて」はサムネイルで選んだ写真の四隅・傾き・指・明るさを、今の仕上げの設定で全部おまかせで直します。'));
           main.append(hint);
         } else if (S.state === 'corners') {
           main.append(cv);
@@ -610,7 +610,12 @@ const Scanner = {
         } catch (e) { toast(`${file.name || '写真'}: ${e.message || e}`, { error: true }); S.cur = null; S.state = 'empty'; }
         render();
       };
-      const next = () => { const f = S.queue.shift(); if (f) load(f); else { S.state = 'empty'; render(); } };
+      const next = () => {
+        const f = S.queue.shift();
+        if (f) load(f);
+        else if (opt.once) close(S.pages.map(({ blob, w, h }) => ({ blob, w, h })));      // 1 枚だけ直す時は、入れた（やめた）ら閉じる
+        else { S.state = 'empty'; render(); }
+      };
       const take = async (camera) => {
         const files = await pickPhotos(camera);
         if (!files.length) return;
@@ -632,28 +637,17 @@ const Scanner = {
         S.busy = false;
         next();
       };
-      /* 写真をまとめて: 四隅（見つからなければ写真全体）・傾き・指・明るさ・トリミングを全部おまかせ */
+      /* 写真をまとめて: サムネイルで選んで、選んだ写真だけ自動補正（まとめて PDF の画面。tray.js） */
       const batch = async () => {
-        const files = await pickPhotos(false);
-        if (!files.length) return;
-        S.busy = true;
-        let n = 0, fail = 0;
-        for (const f of files) {
-          S.msg = `${n + 1} / ${files.length} 枚目を仕上げています…`; render();
-          await new Promise((r) => setTimeout(r, 20));
-          try {
-            const c = await scanLoad(f);
-            const q = scanDetect(c) || [[0, 0], [c.width, 0], [c.width, c.height], [0, c.height]];
-            await push(scanProcess(c, q, { ...o, tilt: 0, crop: null }, SCAN_MAX, {}).pages);
-          } catch { fail++; }
-          n++;
-        }
-        S.busy = false;
-        S.msg = `${files.length - fail} 枚を仕上げました${fail ? `（${fail} 枚は読めませんでした）` : ''}。下の一覧で要らない物は × で外せます。`;
+        const got = await Tray.open({ mode: 'pick', title: '写真をまとめて' });
+        if (!got.length) return;
+        S.pages.push(...got);
+        S.msg = `${got.length} 枚を入れました。下の一覧で要らない物は × で外せます。`;
         saveOpt();
         render();
       };
       render();
+      if (S.queue.length) next();
     });
   },
 };
