@@ -14,7 +14,7 @@ const PAPER_COLORS = [
   { id: 'green', label: '緑', bg: '#eef5ec', line: '#bcd3b8', strong: '#d6a0a0' },
 ];
 
-/* 用紙の種類。mm は線の間隔（ミリ）。cat: basic（基本）・study（勉強・仕事）・plan（週間・月間、日付なし）・music（ミュージック）・
+/* 用紙の種類。mm は線の間隔（ミリ）。cat: basic（基本）・study（勉強・仕事）・doc（書類＝入力欄にタイピング）・plan（週間・月間、日付なし）・music（ミュージック）・
    cover（表紙のページ）・planner（プランナーが作る。一覧には出さない） */
 const PAPER_TYPES = [
   { id: 'blank', label: '無地', cat: 'basic' },
@@ -30,6 +30,12 @@ const PAPER_TYPES = [
   { id: 'twocol', label: '2 段', cat: 'study' },
   { id: 'storyboard', label: '絵コンテ', cat: 'study' },
   { id: 'genko', label: '原稿用紙', cat: 'study' },
+  { id: 'd-plain', label: '文書', cat: 'doc' },
+  { id: 'd-report', label: 'レポート', cat: 'doc' },
+  { id: 'd-minutes', label: '議事録（入力）', cat: 'doc' },
+  { id: 'd-daily', label: '日報', cat: 'doc' },
+  { id: 'd-letter', label: '手紙（便箋）', cat: 'doc' },
+  { id: 'd-fax', label: '送付状', cat: 'doc' },
   { id: 'w-plan', label: '週間（月曜〜・縦）', cat: 'plan' },
   { id: 'w-plan-col', label: '週間（月曜〜・7 列）', cat: 'plan' },
   { id: 'm-plan', label: '月間（カレンダー）', cat: 'plan' },

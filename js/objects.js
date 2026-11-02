@@ -56,7 +56,7 @@ function layoutText(o) {
 /* 文字の高さを中身に合わせる（付箋は少し大きめが最低） */
 function fitTextHeight(o) {
   const L = layoutText(o);
-  o.h = Math.max(L.h, o.bg ? o.w * 0.55 : o.size * 1.45 + L.pad * 2);
+  o.h = Math.max(L.h, o.minH || 0, o.bg ? o.w * 0.55 : o.size * 1.45 + L.pad * 2);      // 入力欄は元の大きさより小さくしない
   return o;
 }
 
@@ -70,7 +70,7 @@ function newStamp(st, x, y) {
   return { id: uid('m'), kind: 'stamp', label, color: st.color, style: st.style, date: label === 'today' ? Date.now() : undefined, x: x - w / 2, y: y - h / 2, w, h, rot: 0 };
 }
 
-/* 物を描く（g はページの座標）。opt.screen = 画面（リンクの枠を出す） */
+/* 物を描く（g はページの座標）。opt.screen = 画面（リンクの枠・入力欄の枠と「タイトル」などの薄い字を出す。PDF には出さない） */
 function drawObject(g, o, opt = {}) {
   const k = o.kind || 'image';
   if (k === 'image') { drawImageItem(g, o); return; }
@@ -80,6 +80,17 @@ function drawObject(g, o, opt = {}) {
   if (o.rot) g.rotate(o.rot);
   g.translate(-o.w / 2, -o.h / 2);
   if (k === 'text') {
+    if (o.field && opt.screen) {          // 書類の入力欄
+      g.save();
+      g.strokeStyle = 'rgba(70,130,230,.35)'; g.lineWidth = 0.8; g.setLineDash([3, 3]);
+      g.strokeRect(0, 0, o.w, o.h);
+      g.restore();
+      if (!o.text) {
+        g.font = objFont({ ...o, bold: false });
+        g.fillStyle = 'rgba(120,128,140,.55)';
+        g.fillText(o.ph || '入力', textPad(o), textPad(o) + o.size * 1.05);
+      }
+    }
     const L = layoutText(o);
     if (o.bg) {
       g.save();
@@ -191,10 +202,13 @@ class TextTool {
     v.hidden = new Set([obj.id]);
     v.invalidate();
     ta.value = obj.text || '';
+    ta.placeholder = obj.ph || '文字を入力';
     ta.hidden = false;
     this.place(v);
     ta.oninput = () => { this.edit.obj.text = ta.value; this.place(v); };
     ta.onkeydown = (e) => { if (e.key === 'Escape') { e.preventDefault(); this.commit(v); } };
+    // iPad はタップの中で focus しないとキーボードが出ない → すぐに focus（カーソルを最後へは少し後で）
+    try { ta.focus({ preventScroll: true }); } catch { ta.focus(); }
     setTimeout(() => { ta.focus(); ta.setSelectionRange(ta.value.length, ta.value.length); }, 20);
     this.app.renderQuick();
   }
@@ -228,7 +242,7 @@ class TextTool {
     const ib = (page.images || []).slice();
     let after = null;
     if (E.isNew) { if (o.text) after = ib.concat([o]); }
-    else if (!o.text) after = ib.filter((x) => x.id !== o.id);
+    else if (!o.text && !o.field) after = ib.filter((x) => x.id !== o.id);      // 入力欄は空でも残す
     else if (o.text !== E.orig.text || o.size !== E.orig.size || o.color !== E.orig.color || o.font !== E.orig.font || o.bold !== E.orig.bold || o.bg !== E.orig.bg)
       after = ib.map((x) => (x.id === o.id ? o : x));
     if (after) v.note.swapBoth(page, page.strokes.slice(), page.strokes.slice(), ib, after, E.isNew ? '文字' : '文字を直す');

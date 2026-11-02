@@ -669,6 +669,7 @@ class App {
     ];
     if (!n.board) {
       items.push({ label: '📄 PDF を後ろに挿入', fn: () => this.insertPdfPick() });
+      items.push({ label: '📷 書類をスキャンして後ろに挿入', fn: () => this.scanInsert() });
       items.push({ label: '📓 ほかのノートを後ろに挿入', fn: () => this.insertNotePick() });
     }
     if (GDrive.configured()) {
@@ -916,7 +917,7 @@ class App {
     const tabs = el('div', { class: 'tpl-tabs' });
     const grid = el('div', { class: 'tpl-grid' });
     const extra = el('div', {});
-    const cats = [['basic', '基本'], ['study', '勉強・仕事'], ['plan', '週間・月間'], ['music', 'ミュージック']]
+    const cats = [['basic', '基本'], ['study', '勉強・仕事'], ['doc', '書類（入力）'], ['plan', '週間・月間'], ['music', 'ミュージック']]
       .concat(state.noCover ? [] : [['cover', '表紙']], [['custom', '自作']], state.planner ? [['planner', 'プランナー（日付入り）']] : []);
     state.accent = state.accent || COVER_ACCENTS[0].c;
     const title = el('input', { type: 'text', class: 'wide', value: state.title || '', placeholder: '空なら手で書く線' });
@@ -1096,6 +1097,7 @@ class App {
     if (state.cover) { item.cover = state.cover; await Store.putItem(item); }
     await this.library.refresh();
     await this.openNote(item.id);
+    if (state.cat === 'doc') { this.setTool('text'); toast('入力欄をタップすると文字を打てます（指・ペンどちらでも）', { ms: 4000 }); }
   }
 
   /* 用紙を変える・その用紙でページを足す */
@@ -1104,7 +1106,7 @@ class App {
     const p = this.currentPage();
     const cur = p.paper || {};
     const pt = PAPER_TYPES.find((x) => x.id === cur.type);
-    const state = { cat: pt && ['basic', 'study', 'plan', 'music', 'cover'].includes(pt.cat) ? pt.cat : 'basic', type: cur.type, color: cur.color || 'white', tpl: null,
+    const state = { cat: pt && ['basic', 'study', 'doc', 'plan', 'music', 'cover'].includes(pt.cat) ? pt.cat : 'basic', type: cur.type, color: cur.color || 'white', tpl: null,
       accent: cur.accent, title: cur.title !== undefined ? cur.title : /^無題/.test(n.item.name) ? '' : n.item.name };
     if (n.board) {
       const types = el('div', { class: 'tpl-grid' });
@@ -1140,8 +1142,18 @@ class App {
     const paper = { type: state.type, color: state.color };
     if (isCoverPaper(paper)) Object.assign(paper, { accent: state.accent, title: state.title || '' });
     if (v === 'add') { n.addPage(i + 1, null, paper); this.afterPageChange(); this.view.goToPage(i + 1); return; }
-    n.setPaper(v === 'all' ? n.pages.slice() : [p], paper);
+    const targets = v === 'all' ? n.pages.slice() : [p];
+    n.setPaper(targets, paper);
     if (v === 'all') { n.item.paper = paper; n.itemDirty = true; }
+    // 書類の用紙にしたら入力欄を置く・ほかの用紙にしたら空の入力欄を外す
+    for (const pg of targets) {
+      const ib = (pg.images || []).slice(), fields = ib.filter((o) => o.field);
+      let after = null;
+      if (DOC_SHEETS[paper.type]) { if (!fields.length) after = ib.concat(docFieldsFor(pg)); }
+      else if (fields.some((o) => !o.text)) after = ib.filter((o) => !(o.field && !o.text));
+      if (after) n.swapBoth(pg, pg.strokes.slice(), pg.strokes.slice(), ib, after, '入力欄');
+    }
+    if (DOC_SHEETS[paper.type]) { this.setTool('text'); toast('入力欄をタップすると文字を打てます'); }
     this.afterPageChange();
   }
 
@@ -1213,16 +1225,7 @@ class App {
     if (imgs.length) {
       const pr = progressBox('画像を読み込んでいます');
       try {
-        const pages = [];
-        for (let i = 0; i < imgs.length; i++) {
-          pr.set(i, imgs.length);
-          try {
-            const r = await storeImage(imgs[i]);
-            const W = 595, H = Math.round((595 * r.h) / r.w);
-            pages.push({ id: uid('p'), w: W, h: H, rot: 0, infinite: false, paper: { type: 'blank', color: 'white' }, strokes: [],
-              images: [{ id: uid('m'), src: r.src, x: 0, y: 0, w: W, h: H, rot: 0 }] });
-          } catch (e) { toast(`${imgs[i].name}: ${e.message || e}`, { error: true }); }
-        }
+        const pages = await pagesFromImages(imgs, (i, k) => pr.set(i, k));
         if (pages.length) {
           const name = imgs.length === 1 ? imgs[0].name.replace(/\.[^.]+$/, '') : `画像 ${pages.length} 枚`;
           const item = await createNoteFromPages({ name, parent, pages });
@@ -1245,6 +1248,40 @@ class App {
     if (made === 1 && lastId && !kmkw.length) await this.openNote(lastId);
   }
 
+  // ================= 書類のスキャン（js/scanner.js）
+  /* 撮った書類 → 画像のページ */
+  async scanPages() {
+    const shots = await Scanner.open();
+    if (!shots.length) return [];
+    const pr = progressBox('スキャンをページにしています');
+    try {
+      const files = shots.map((s, i) => new File([s.blob], `scan-${i + 1}.jpg`, { type: s.blob.type || 'image/jpeg' }));
+      return await pagesFromImages(files, (i, k) => pr.set(i, k));
+    } finally { pr.close(); }
+  }
+  async scanNew() {
+    const pages = await this.scanPages();
+    if (!pages.length) return;
+    const item = await createNoteFromPages({ name: `スキャン ${fmtDate(Date.now()).slice(5)}`, parent: this.library.currentFolderForNew(), pages });
+    await new Promise((r) => setTimeout(r, 300));       // 画像の読み込みを待って小さな絵を作る
+    item.thumb = await this.thumbAsync(pages[0], 220);
+    await Store.putItem(item);
+    await this.library.refresh();
+    await this.openNote(item.id);
+    toast(`${pages.length} ページのスキャンを作りました`);
+  }
+  async scanInsert() {
+    const n = this.note;
+    if (!n || n.board) return;
+    const pages = await this.scanPages();
+    if (!pages.length || this.note !== n) return;
+    const at = this.view.currentPageIndex() + 1;
+    n.insertPages(at, pages, 'スキャンを挿入');
+    this.afterPageChange();
+    this.view.goToPage(at);
+    toast(`${pages.length} ページを挿入しました`);
+  }
+
   // ================= その他の UI
   showBadge(text) {
     const b = $('#badge');
@@ -1263,6 +1300,9 @@ class App {
       if (this.player.open && this.player.sync && this.player.seekToStroke(hit.page, q, 10 / this.view.s)) return;
       const link = (hit.page.images || []).slice().reverse().find((o) => o.kind === 'link' && imageHit(o, q.x, q.y));
       if (link) { this.followLink(link); return; }
+      // 書類の入力欄を指でタップ → キーボードで入力
+      const field = !this.tools.text.edit && (hit.page.images || []).slice().reverse().find((o) => o.kind === 'text' && o.field && imageHit(o, q.x, q.y));
+      if (field) { this.setTool('text'); this.tools.text.open(this.view, hit.page, field, false); return; }
       if (this.zoomWin.open && !n.board && this.zoomWin.moveTo(hit.page, q)) return;
     }
     if (this.tools.lasso.sel) { this.tools.lasso.clear(this.view); return; }

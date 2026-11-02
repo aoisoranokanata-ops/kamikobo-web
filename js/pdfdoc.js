@@ -361,6 +361,21 @@ async function storeImage(file) {
   return { src, w: W0, h: H0 };
 }
 
+/* 画像のファイル → 1 枚 1 ページ（幅 595pt・画像がページいっぱい）。読めなかった物は知らせて飛ばす */
+async function pagesFromImages(files, onProgress) {
+  const pages = [];
+  for (let i = 0; i < files.length; i++) {
+    if (onProgress) onProgress(i, files.length);
+    try {
+      const r = await storeImage(files[i]);
+      const W = 595, H = Math.round((595 * r.h) / r.w);
+      pages.push({ id: uid('p'), w: W, h: H, rot: 0, infinite: false, paper: { type: 'blank', color: 'white' }, strokes: [],
+        images: [{ id: uid('m'), src: r.src, x: 0, y: 0, w: W, h: H, rot: 0 }] });
+    } catch (e) { toast(`${files[i].name}: ${e.message || e}`, { error: true }); }
+  }
+  return pages;
+}
+
 function loadImageEl(blobOrFile) {
   return new Promise((res, rej) => {
     const url = URL.createObjectURL(blobOrFile);
