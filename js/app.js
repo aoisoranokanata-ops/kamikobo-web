@@ -499,6 +499,7 @@ class App {
       { label: 'このページを複製', fn: () => { n.duplicatePage(p); this.afterPageChange(); } },
       { label: 'このページを削除', danger: true, fn: () => this.deletePage(p) },
       { label: 'ここで分割（このページから後ろを新しいノートへ）', fn: () => this.splitAt(n.pageIndex(p)) },
+      { label: '📚 ファイルを最後にまとめて追加…', fn: () => this.appendFilesPick() },
       null,
       { label: '用紙を変更…', fn: () => this.paperDialog() },
       { label: 'ページの一覧', fn: () => this.openPanel() },
@@ -723,6 +724,7 @@ class App {
     ];
     if (!n.board) {
       items.push({ label: '📄 PDF を後ろに挿入', fn: () => this.insertPdfPick() });
+      items.push({ label: '📚 ファイルを最後にまとめて追加…', fn: () => this.appendFilesPick() });
       items.push({ label: '📷 書類をスキャンして後ろに挿入', fn: () => this.scanInsert() });
       items.push({ label: '📓 ほかのノートを後ろに挿入', fn: () => this.insertNotePick() });
     }
@@ -779,6 +781,77 @@ class App {
       this.view.goToPage(at);
       toast(`${pages.length} ページを挿入しました`);
     } catch (e) { toast(e.message || String(e), { error: true, ms: 6000 }); } finally { pr.close(); }
+  }
+  /* ファイルを最後にまとめて追加: 選んだ PDF・画像を、このノートの最後に上から順に次々と足す
+     （手で「最後のページ → 後ろに挿入」を繰り返す代わり）。名前の数の順（憲法2 → 憲法10）に並べ、↑↓ で直せる。
+     ファイルごとに 1 ページ目へしおり。全部まとめて 1 回の「元に戻す」で戻る */
+  async appendFilesPick() {
+    const isOk = (f) => /pdf$/i.test(f.type) || /\.pdf$/i.test(f.name) || /^image\//.test(f.type) || /\.(jpe?g|png|gif|webp|heic|heif)$/i.test(f.name);
+    let files = (await pickFiles('application/pdf,.pdf,image/*', true)).filter(isOk);
+    if (!files.length) return;
+    const n = this.note;
+    const key = (f) => f.name.normalize('NFKC');
+    const byName = () => files.sort((a, b) => key(a).localeCompare(key(b), 'ja', { numeric: true }));
+    byName();
+    const list = el('div', { class: 'append-list' });
+    const draw = () => {
+      list.innerHTML = '';
+      files.forEach((f, i) => {
+        const pdf = /pdf$/i.test(f.type) || /\.pdf$/i.test(f.name);
+        list.append(el('div', { class: 'append-row' },
+          el('span', { class: 'append-no' }, String(i + 1)),
+          el('span', { class: 'append-name' }, (pdf ? '📄 ' : '🖼 ') + f.name),
+          el('button', { class: 'small', disabled: i === 0, onclick: () => { [files[i - 1], files[i]] = [files[i], files[i - 1]]; draw(); } }, '↑'),
+          el('button', { class: 'small', disabled: i === files.length - 1, onclick: () => { [files[i + 1], files[i]] = [files[i], files[i + 1]]; draw(); } }, '↓'),
+          el('button', { class: 'small danger', onclick: () => { files.splice(i, 1); draw(); } }, '✕')));
+      });
+    };
+    draw();
+    const perFile = el('input', { type: 'checkbox', checked: true });
+    const mainMark = el('input', { type: 'checkbox', checked: !n.pages[0].mark });
+    perFile.addEventListener('change', () => { mainMark.disabled = !perFile.checked; });
+    const body = el('div', { class: 'settings' },
+      el('p', {}, `「${n.item.name}」（${n.pages.length} ページ）の最後に、上から順に追加します。`),
+      el('p', { class: 'muted small' }, `1 つ目は ${n.pages.length} ページ目の後ろ、2 つ目はその後ろ…と自動で続けます。名前の数の順（1・2・…・10）に並べてあります。`
+        + 'PDF に入っている目次（アウトライン）は、そのまま「目次」で見られます。'),
+      list,
+      el('div', { class: 'row-buttons' },
+        el('button', { class: 'small', onclick: async () => { const more = (await pickFiles('application/pdf,.pdf,image/*', true)).filter(isOk); if (more.length) { files = files.concat(more); draw(); } } }, '＋ ファイルを足す'),
+        el('button', { class: 'small', onclick: () => { byName(); draw(); } }, '名前順')),
+      el('label', { class: 'row' }, perFile, ' ファイルごとに 1 ページ目へしおり（名前はファイル名）'),
+      el('label', { class: 'row' }, mainMark, ` 「${n.item.name}」の 1 ページ目にもしおり`));
+    const ok = await modal('ファイルを最後にまとめて追加', body,
+      [{ label: 'キャンセル', value: null }, { label: '最後に追加する', primary: true, value: 'ok', check: () => (files.length ? true : (toast('ファイルを選んでください'), false)) }], { wide: true });
+    if (ok !== 'ok' || !files.length) return;
+    const pr = progressBox('ファイルを読み込んでいます');
+    const all = [];
+    let done = 0;
+    try {
+      for (let i = 0; i < files.length; i++) {
+        const f = files[i], pdf = /pdf$/i.test(f.type) || /\.pdf$/i.test(f.name);
+        pr.set(i, files.length, `${f.name}（${i + 1} / ${files.length}）`);
+        let pages = [];
+        try { pages = pdf ? await pagesFromPdf(f) : await pagesFromImages([f]); }
+        catch (e) { toast(`${f.name}: ${e.message || e}`, { error: true, ms: 6000 }); continue; }
+        if (!pages.length) continue;
+        if (perFile.checked) pages[0].mark = { title: f.name.replace(/\.[^.]+$/, '') };
+        all.push(...pages);
+        done++;
+      }
+    } finally { pr.close(); }
+    if (!all.length) return;
+    const at = n.pages.length, first = n.pages[0];
+    n.insertPages(at, all, 'ファイルを最後に追加');
+    if (perFile.checked && mainMark.checked && !first.mark) {      // 1 ページ目のしおりも同じ取り消しの中に
+      const ins = n.undoStack.pop(), mark = { title: n.item.name };
+      const setMark = (m) => { if (m) first.mark = m; else delete first.mark; n.dirty.add(first.id); n.touch(null); };
+      setMark(mark);
+      n.push({ label: ins.label, redo: () => { ins.redo(); setMark(mark); }, undo: () => { setMark(null); ins.undo(); } }, false);
+    }
+    this.afterPageChange();
+    this.view.goToPage(at);
+    this.updateStatus();
+    toast(`${done} 個のファイル（${all.length} ページ）を最後に追加しました。全部で ${n.pages.length} ページ`, { ms: 5000 });
   }
   async insertNotePick() {
     const n = this.note;
